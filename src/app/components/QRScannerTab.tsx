@@ -379,6 +379,51 @@ export function QRScannerTab({ guests, onMarkPresent }: Props) {
     }
   }, []);
 
+  const attachStreamToVideo = useCallback(async () => {
+    const stream = streamRef.current;
+    const video = videoRef.current;
+    if (!stream || !video) return false;
+
+    if (video.srcObject !== stream) {
+      video.srcObject = stream;
+    }
+    video.setAttribute("autoplay", "true");
+    video.setAttribute("playsinline", "true");
+    video.setAttribute("muted", "true");
+
+    await new Promise<void>((resolve) => {
+      let done = false;
+      const complete = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      video.addEventListener("loadedmetadata", complete, { once: true });
+      video.addEventListener("canplay", complete, { once: true });
+      setTimeout(complete, 1200);
+    });
+
+    await video.play().catch(() => undefined);
+
+    const hasFrames = await new Promise<boolean>((resolve) => {
+      const startedAt = Date.now();
+      const check = () => {
+        if (video.videoWidth > 0 && video.videoHeight > 0 && video.readyState >= 2) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() - startedAt > 2500) {
+          resolve(false);
+          return;
+        }
+        setTimeout(check, 100);
+      };
+      check();
+    });
+
+    return hasFrames;
+  }, []);
+
   // ── Animated scan line ───────────────────────────────────────────────────
   useEffect(() => {
     if (camState !== "active") return;
@@ -473,45 +518,7 @@ export function QRScannerTab({ guests, onMarkPresent }: Props) {
       if (!stream) throw lastError ?? new Error("NoCameraStream");
 
       streamRef.current = stream;
-      if (videoRef.current) {
-        const video = videoRef.current;
-        video.setAttribute("autoplay", "true");
-        video.setAttribute("playsinline", "true");
-        video.setAttribute("muted", "true");
-        video.srcObject = stream;
-
-        await new Promise<void>((resolve) => {
-          let done = false;
-          const complete = () => {
-            if (done) return;
-            done = true;
-            resolve();
-          };
-          video.addEventListener("loadedmetadata", complete, { once: true });
-          video.addEventListener("canplay", complete, { once: true });
-          setTimeout(complete, 1200);
-        });
-
-        await video.play().catch(() => undefined);
-
-        const hasFrames = await new Promise<boolean>((resolve) => {
-          const startedAt = Date.now();
-          const check = () => {
-            if (video.videoWidth > 0 && video.videoHeight > 0 && video.readyState >= 2) {
-              resolve(true);
-              return;
-            }
-            if (Date.now() - startedAt > 2500) {
-              resolve(false);
-              return;
-            }
-            setTimeout(check, 100);
-          };
-          check();
-        });
-
-        if (!hasFrames) throw new Error("NoVideoFrames");
-      }
+      // Move to active first, because <video> only mounts in the active state.
       setCamState("active");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.name : "";
@@ -634,6 +641,25 @@ export function QRScannerTab({ guests, onMarkPresent }: Props) {
       }
     };
   }, [camState, scanFrame]);
+
+  // Attach stream after the active UI mounts the <video> element.
+  useEffect(() => {
+    if (camState !== "active") return;
+    let cancelled = false;
+
+    (async () => {
+      const hasFrames = await attachStreamToVideo();
+      if (cancelled || hasFrames) return;
+
+      setErrorText("Se concedió permiso, pero la cámara no entregó imagen. Reintenta o abre en navegador externo.");
+      stopCamera();
+      setCamState("error");
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [attachStreamToVideo, camState, stopCamera]);
 
   // Cleanup on unmount
   useEffect(() => {
