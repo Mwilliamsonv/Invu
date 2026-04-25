@@ -29,11 +29,38 @@ interface Props {
 
 // ── Parse QR content ──────────────────────────────────────────────────────────
 // Format: "ID: 0001\nNombre: María González"
-function parseQR(text: string): { id: number; name: string } | null {
-  const idMatch   = text.match(/ID:\s*(\d+)/i);
-  const nameMatch = text.match(/Nombre:\s*(.+)/i);
-  if (!idMatch || !nameMatch) return null;
-  return { id: parseInt(idMatch[1], 10), name: nameMatch[1].trim() };
+function parseQR(text: string): { id: number; name?: string } | null {
+  const raw = text.trim();
+
+  try {
+    const parsed = JSON.parse(raw) as { id?: unknown; name?: unknown };
+    if (typeof parsed.id === "number" && Number.isFinite(parsed.id)) {
+      return { id: parsed.id, name: typeof parsed.name === "string" ? parsed.name.trim() : undefined };
+    }
+  } catch {
+    // Continue with URL/text parsing.
+  }
+
+  try {
+    const url = new URL(raw);
+    const idParam = url.searchParams.get("id") ?? url.searchParams.get("guestId");
+    if (idParam && /^\d+$/.test(idParam)) {
+      return {
+        id: parseInt(idParam, 10),
+        name: url.searchParams.get("name")?.trim() || undefined,
+      };
+    }
+  } catch {
+    // Continue with regex parsing.
+  }
+
+  const idMatch = raw.match(/(?:^|\b)(?:ID|id|guestId)\s*[:#-]?\s*(\d+)\b/);
+  if (!idMatch) return null;
+  const nameMatch = raw.match(/(?:^|\b)(?:Nombre|nombre|Name|name)\s*[:#-]\s*(.+)/);
+  return {
+    id: parseInt(idMatch[1], 10),
+    name: nameMatch?.[1]?.trim(),
+  };
 }
 
 // ── Guest Detail Sheet (inline, adapted for scanner) ─────────────────────────
@@ -330,13 +357,27 @@ export function QRScannerTab({ guests, onMarkPresent }: Props) {
   const videoRef   = useRef<HTMLVideoElement>(null);
   const canvasRef  = useRef<HTMLCanvasElement>(null);
   const streamRef  = useRef<MediaStream | null>(null);
-  const rafRef     = useRef<number>(0);
+  const scanRafRef = useRef<number | null>(null);
+  const lineRafRef = useRef<number | null>(null);
   const cooldownRef = useRef(false);
 
   const [camState, setCamState]     = useState<CameraState>("idle");
   const [scanResult, setScanResult] = useState<"found" | "unknown" | null>(null);
   const [foundGuest, setFoundGuest] = useState<ScanGuest | null>(null);
   const [scanLine, setScanLine]     = useState(0); // animated scan bar 0-100%
+  const [errorText, setErrorText]   = useState<string | null>(null);
+  const [cameraIds, setCameraIds]   = useState<string[]>([]);
+  const [cameraIndex, setCameraIndex] = useState(0);
+  const [videoStats, setVideoStats] = useState("w:0 h:0 rs:0");
+
+  const getCameraIds = useCallback(async () => {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return devices.filter((d) => d.kind === "videoinput").map((d) => d.deviceId).filter(Boolean);
+    } catch {
+      return [] as string[];
+    }
+  }, []);
 
   // ── Animated scan line ───────────────────────────────────────────────────
   useEffect(() => {
@@ -348,38 +389,184 @@ export function QRScannerTab({ guests, onMarkPresent }: Props) {
       if (pos >= 100) { pos = 100; dir = -1; }
       if (pos <= 0)   { pos = 0;   dir =  1; }
       setScanLine(pos);
-      rafRef.current = requestAnimationFrame(step);
+      lineRafRef.current = requestAnimationFrame(step);
     };
-    rafRef.current = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(rafRef.current);
+    lineRafRef.current = requestAnimationFrame(step);
+    return () => {
+      if (lineRafRef.current !== null) {
+        cancelAnimationFrame(lineRafRef.current);
+        lineRafRef.current = null;
+      }
+    };
   }, [camState]);
 
   // ── Start camera ─────────────────────────────────────────────────────────
-  const startCamera = useCallback(async () => {
+  const startCamera = useCallback(async (preferredDeviceId?: string) => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setErrorText("Este navegador no soporta acceso a cámara.");
+      setCamState("error");
+      return;
+    }
+
+    streamRef.current?.getTracks().forEach((t) => t.stop());
     setCamState("requesting");
     setScanResult(null);
     setFoundGuest(null);
+    setErrorText(null);
+    cooldownRef.current = false;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false,
-      });
+      const deviceIds = await getCameraIds();
+      if (deviceIds.length > 0) {
+        setCameraIds(deviceIds);
+      }
+
+      const attempts: MediaStreamConstraints[] = [
+        {
+          video: {
+            facingMode: { exact: "environment" },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+          },
+          audio: false,
+        },
+        {
+          video: {
+            facingMode: "environment",
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+          audio: false,
+        },
+        {
+          video: {
+            facingMode: "user",
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+          audio: false,
+        },
+        { video: true, audio: false },
+      ];
+
+      const preferred = preferredDeviceId ?? deviceIds[cameraIndex];
+      if (preferred) {
+        attempts.unshift({
+          video: {
+            deviceId: { exact: preferred },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+          },
+          audio: false,
+        });
+      }
+
+      let stream: MediaStream | null = null;
+      let lastError: unknown = null;
+      for (const constraints of attempts) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(constraints);
+          break;
+        } catch (err) {
+          lastError = err;
+        }
+      }
+      if (!stream) throw lastError ?? new Error("NoCameraStream");
+
       streamRef.current = stream;
       if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
+        const video = videoRef.current;
+        video.setAttribute("autoplay", "true");
+        video.setAttribute("playsinline", "true");
+        video.setAttribute("muted", "true");
+        video.srcObject = stream;
+
+        await new Promise<void>((resolve) => {
+          let done = false;
+          const complete = () => {
+            if (done) return;
+            done = true;
+            resolve();
+          };
+          video.addEventListener("loadedmetadata", complete, { once: true });
+          video.addEventListener("canplay", complete, { once: true });
+          setTimeout(complete, 1200);
+        });
+
+        await video.play().catch(() => undefined);
+
+        const hasFrames = await new Promise<boolean>((resolve) => {
+          const startedAt = Date.now();
+          const check = () => {
+            if (video.videoWidth > 0 && video.videoHeight > 0 && video.readyState >= 2) {
+              resolve(true);
+              return;
+            }
+            if (Date.now() - startedAt > 2500) {
+              resolve(false);
+              return;
+            }
+            setTimeout(check, 100);
+          };
+          check();
+        });
+
+        if (!hasFrames) throw new Error("NoVideoFrames");
       }
       setCamState("active");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.name : "";
-      setCamState(msg === "NotAllowedError" || msg === "PermissionDeniedError" ? "denied" : "error");
+      if (msg === "NotAllowedError" || msg === "PermissionDeniedError") {
+        setCamState("denied");
+        return;
+      }
+
+      if (msg === "NotReadableError") {
+        setErrorText("La cámara está en uso por otra aplicación.");
+      } else if (msg === "NotFoundError" || msg === "DevicesNotFoundError") {
+        setErrorText("No se detectó ninguna cámara disponible.");
+      } else if (msg === "NoVideoFrames") {
+        setErrorText("Se concedió permiso, pero la cámara no entregó imagen. Reintenta o abre en navegador externo.");
+      } else {
+        setErrorText("No se pudo iniciar la cámara en este entorno.");
+      }
+
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      if (videoRef.current) {
+        videoRef.current.pause();
+        videoRef.current.srcObject = null;
+      }
+      setCamState("error");
     }
-  }, []);
+  }, [cameraIndex, getCameraIds]);
+
+  const switchCamera = useCallback(async () => {
+    const ids = cameraIds.length ? cameraIds : await getCameraIds();
+    if (!ids.length) {
+      await startCamera();
+      return;
+    }
+    const next = (cameraIndex + 1) % ids.length;
+    setCameraIndex(next);
+    await startCamera(ids[next]);
+  }, [cameraIds, cameraIndex, getCameraIds, startCamera]);
 
   // ── Stop camera ───────────────────────────────────────────────────────────
   const stopCamera = useCallback(() => {
+    if (scanRafRef.current !== null) {
+      cancelAnimationFrame(scanRafRef.current);
+      scanRafRef.current = null;
+    }
+    if (lineRafRef.current !== null) {
+      cancelAnimationFrame(lineRafRef.current);
+      lineRafRef.current = null;
+    }
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
+    if (videoRef.current) {
+      videoRef.current.pause();
+      videoRef.current.srcObject = null;
+    }
   }, []);
 
   // ── Frame scan loop ───────────────────────────────────────────────────────
@@ -387,7 +574,7 @@ export function QRScannerTab({ guests, onMarkPresent }: Props) {
     const video  = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || video.readyState < 2) {
-      rafRef.current = requestAnimationFrame(scanFrame);
+      scanRafRef.current = requestAnimationFrame(scanFrame);
       return;
     }
 
@@ -409,7 +596,9 @@ export function QRScannerTab({ guests, onMarkPresent }: Props) {
 
       if (parsed) {
         const guest = guests.find(
-          (g) => g.id === parsed.id || g.name.toLowerCase() === parsed.name.toLowerCase()
+          (g) =>
+            g.id === parsed.id ||
+            (!!parsed.name && g.name.toLowerCase() === parsed.name.toLowerCase())
         );
         if (guest) {
           setScanResult("found");
@@ -431,23 +620,36 @@ export function QRScannerTab({ guests, onMarkPresent }: Props) {
       }
     }
 
-    rafRef.current = requestAnimationFrame(scanFrame);
+    scanRafRef.current = requestAnimationFrame(scanFrame);
   }, [guests]);
 
   // Start scan loop when active
   useEffect(() => {
     if (camState !== "active") return;
-    rafRef.current = requestAnimationFrame(scanFrame);
-    return () => cancelAnimationFrame(rafRef.current);
+    scanRafRef.current = requestAnimationFrame(scanFrame);
+    return () => {
+      if (scanRafRef.current !== null) {
+        cancelAnimationFrame(scanRafRef.current);
+        scanRafRef.current = null;
+      }
+    };
   }, [camState, scanFrame]);
 
   // Cleanup on unmount
   useEffect(() => {
-    return () => {
-      stopCamera();
-      cancelAnimationFrame(rafRef.current);
-    };
+    return () => stopCamera();
   }, [stopCamera]);
+
+  useEffect(() => {
+    if (camState !== "active") return;
+    const id = window.setInterval(() => {
+      const video = videoRef.current;
+      const track = streamRef.current?.getVideoTracks?.()[0];
+      const stats = `w:${video?.videoWidth ?? 0} h:${video?.videoHeight ?? 0} rs:${video?.readyState ?? 0} t:${track?.readyState ?? "none"}`;
+      setVideoStats(stats);
+    }, 700);
+    return () => window.clearInterval(id);
+  }, [camState]);
 
   const handleMarkPresent = (bracelet: number) => {
     if (!foundGuest) return;
@@ -558,7 +760,7 @@ export function QRScannerTab({ guests, onMarkPresent }: Props) {
         <div className="text-center">
           <p style={{ fontSize: "16px", fontWeight: 700, color: "#3d4a5c", margin: 0 }}>Error de cámara</p>
           <p style={{ fontSize: "13px", color: "#8a9bb0", margin: 0, marginTop: 6, lineHeight: 1.5 }}>
-            No se pudo acceder a la cámara. Verificá que no esté siendo usada por otra aplicación.
+            {errorText ?? "No se pudo acceder a la cámara. Verificá que no esté siendo usada por otra aplicación."}
           </p>
         </div>
         <button
@@ -585,7 +787,8 @@ export function QRScannerTab({ guests, onMarkPresent }: Props) {
         <div
           className="relative w-full overflow-hidden rounded-3xl"
           style={{
-            aspectRatio: "1 / 1",
+            height: "min(72vh, 680px)",
+            minHeight: "360px",
             background: "#1a1a2e",
             boxShadow: "8px 8px 20px #b8bec7, -8px -8px 20px #ffffff",
           }}
@@ -593,23 +796,10 @@ export function QRScannerTab({ guests, onMarkPresent }: Props) {
           {/* Video feed */}
           <video
             ref={videoRef}
+            autoPlay
             playsInline
             muted
             style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-          />
-
-          {/* Dark overlay with cutout effect (CSS approach) */}
-          <div
-            className="absolute inset-0"
-            style={{
-              background: "linear-gradient(rgba(0,0,0,0.35) 0%, transparent 28%, transparent 72%, rgba(0,0,0,0.35) 100%)",
-            }}
-          />
-          <div
-            className="absolute inset-0"
-            style={{
-              background: "linear-gradient(90deg, rgba(0,0,0,0.35) 0%, transparent 28%, transparent 72%, rgba(0,0,0,0.35) 100%)",
-            }}
           />
 
           {/* Viewfinder box */}
@@ -694,6 +884,13 @@ export function QRScannerTab({ guests, onMarkPresent }: Props) {
                 : "Buscando código QR…"}
             </span>
           </div>
+
+          <div
+            className="absolute top-3 left-3 px-2 py-1 rounded-md"
+            style={{ background: "rgba(20,20,30,0.6)", backdropFilter: "blur(2px)" }}
+          >
+            <span style={{ fontSize: "10px", color: "#dbe3ee", fontWeight: 500 }}>{videoStats}</span>
+          </div>
         </div>
 
         {/* Info row */}
@@ -708,18 +905,35 @@ export function QRScannerTab({ guests, onMarkPresent }: Props) {
         </div>
 
         {/* Stop camera button */}
-        <button
-          onClick={() => { stopCamera(); setCamState("idle"); setScanResult(null); setFoundGuest(null); cooldownRef.current = false; }}
-          className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2"
-          style={{
-            background: "#e8ecf0",
-            boxShadow: "5px 5px 10px #b8bec7, -5px -5px 10px #ffffff",
-            border: "none", cursor: "pointer",
-          }}
-        >
-          <CameraOff size={16} color="#e53e3e" strokeWidth={2} />
-          <span style={{ fontSize: "14px", fontWeight: 600, color: "#8a9bb0" }}>Detener cámara</span>
-        </button>
+        <div className="flex gap-3">
+          <button
+            onClick={switchCamera}
+            className="flex-1 py-3.5 rounded-2xl flex items-center justify-center gap-2"
+            style={{
+              background: "#e8ecf0",
+              boxShadow: "5px 5px 10px #b8bec7, -5px -5px 10px #ffffff",
+              border: "none", cursor: "pointer",
+            }}
+          >
+            <RefreshCw size={16} color="#26c6da" strokeWidth={2} />
+            <span style={{ fontSize: "14px", fontWeight: 600, color: "#3d4a5c" }}>
+              Cambiar cámara
+            </span>
+          </button>
+
+          <button
+            onClick={() => { stopCamera(); setCamState("idle"); setScanResult(null); setFoundGuest(null); cooldownRef.current = false; }}
+            className="flex-1 py-3.5 rounded-2xl flex items-center justify-center gap-2"
+            style={{
+              background: "#e8ecf0",
+              boxShadow: "5px 5px 10px #b8bec7, -5px -5px 10px #ffffff",
+              border: "none", cursor: "pointer",
+            }}
+          >
+            <CameraOff size={16} color="#e53e3e" strokeWidth={2} />
+            <span style={{ fontSize: "14px", fontWeight: 600, color: "#8a9bb0" }}>Detener cámara</span>
+          </button>
+        </div>
       </div>
 
       {/* Hidden canvas for frame processing */}
