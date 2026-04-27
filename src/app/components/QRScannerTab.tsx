@@ -29,13 +29,32 @@ interface Props {
 
 // ── Parse QR content ──────────────────────────────────────────────────────────
 // Format: "ID: 0001\nNombre: María González"
+function normalizeName(value?: string) {
+  return (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
 function parseQR(text: string): { id: number; name?: string } | null {
   const raw = text.trim();
 
   try {
-    const parsed = JSON.parse(raw) as { id?: unknown; name?: unknown };
-    if (typeof parsed.id === "number" && Number.isFinite(parsed.id)) {
-      return { id: parsed.id, name: typeof parsed.name === "string" ? parsed.name.trim() : undefined };
+    const parsed = JSON.parse(raw) as { id?: unknown; guestNumber?: unknown; name?: unknown };
+    const rawId = parsed.id ?? parsed.guestNumber;
+    const numId =
+      typeof rawId === "number"
+        ? rawId
+        : typeof rawId === "string" && /^\d+$/.test(rawId)
+        ? parseInt(rawId, 10)
+        : NaN;
+
+    if (Number.isFinite(numId)) {
+      return {
+        id: numId,
+        name: typeof parsed.name === "string" ? parsed.name.trim() : undefined,
+      };
     }
   } catch {
     // Continue with URL/text parsing.
@@ -360,6 +379,8 @@ export function QRScannerTab({ guests, onMarkPresent }: Props) {
   const scanRafRef = useRef<number | null>(null);
   const lineRafRef = useRef<number | null>(null);
   const cooldownRef = useRef(false);
+  const barcodeDetectorRef = useRef<any>(null);
+  const scanningBusyRef = useRef(false);
 
   const [camState, setCamState]     = useState<CameraState>("idle");
   const [scanResult, setScanResult] = useState<"found" | "unknown" | null>(null);
@@ -577,57 +598,97 @@ export function QRScannerTab({ guests, onMarkPresent }: Props) {
   }, []);
 
   // ── Frame scan loop ───────────────────────────────────────────────────────
-  const scanFrame = useCallback(() => {
+  const scanFrame = useCallback(async () => {
     const video  = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas || video.readyState < 2) {
+    if (!video || !canvas || video.readyState < 2 || scanningBusyRef.current) {
       scanRafRef.current = requestAnimationFrame(scanFrame);
       return;
     }
 
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    if (!ctx) return;
+    if (!ctx) {
+      scanRafRef.current = requestAnimationFrame(scanFrame);
+      return;
+    }
 
-    canvas.width  = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    scanningBusyRef.current = true;
 
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const result    = jsQR(imageData.data, imageData.width, imageData.height, {
-      inversionAttempts: "dontInvert",
-    });
+    try {
+      // Reduce frame size for faster decode without losing reliability.
+      const srcW = video.videoWidth || 0;
+      const srcH = video.videoHeight || 0;
+      const maxW = 960;
+      const ratio = srcW > maxW ? maxW / srcW : 1;
+      const drawW = Math.max(320, Math.floor(srcW * ratio));
+      const drawH = Math.max(240, Math.floor(srcH * ratio));
 
-    if (result && !cooldownRef.current) {
-      cooldownRef.current = true;
-      const parsed = parseQR(result.data);
+      canvas.width  = drawW;
+      canvas.height = drawH;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      if (parsed) {
-        const guest = guests.find(
-          (g) =>
-            g.id === parsed.id ||
-            (!!parsed.name && g.name.toLowerCase() === parsed.name.toLowerCase())
-        );
-        if (guest) {
-          setScanResult("found");
-          setFoundGuest(guest);
+      let qrText: string | null = null;
+
+      // Fast path: native BarcodeDetector where available.
+      if (typeof (window as any).BarcodeDetector !== "undefined") {
+        try {
+          if (!barcodeDetectorRef.current) {
+            barcodeDetectorRef.current = new (window as any).BarcodeDetector({
+              formats: ["qr_code"],
+            });
+          }
+          const barcodes = await barcodeDetectorRef.current.detect(canvas);
+          if (barcodes?.length) {
+            qrText = (barcodes[0].rawValue || "").trim();
+          }
+        } catch {
+          // Fallback to jsQR below.
+        }
+      }
+
+      // Fallback path: jsQR
+      if (!qrText) {
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const result = jsQR(imageData.data, imageData.width, imageData.height, {
+          inversionAttempts: "attemptBoth",
+        });
+        if (result?.data) {
+          qrText = result.data.trim();
+        }
+      }
+
+      if (qrText && !cooldownRef.current) {
+        cooldownRef.current = true;
+        const parsed = parseQR(qrText);
+
+        if (parsed) {
+          const parsedName = normalizeName(parsed.name);
+          const guest = guests.find(
+            (g) => g.id === parsed.id || (!!parsedName && normalizeName(g.name) === parsedName)
+          );
+          if (guest) {
+            setScanResult("found");
+            setFoundGuest(guest);
+          } else {
+            setScanResult("unknown");
+            // Reset after 2.5s to allow re-scan
+            setTimeout(() => {
+              setScanResult(null);
+              cooldownRef.current = false;
+            }, 2500);
+          }
         } else {
           setScanResult("unknown");
-          // Reset after 2.5s to allow re-scan
           setTimeout(() => {
             setScanResult(null);
             cooldownRef.current = false;
           }, 2500);
         }
-      } else {
-        setScanResult("unknown");
-        setTimeout(() => {
-          setScanResult(null);
-          cooldownRef.current = false;
-        }, 2500);
       }
+    } finally {
+      scanningBusyRef.current = false;
+      scanRafRef.current = requestAnimationFrame(scanFrame);
     }
-
-    scanRafRef.current = requestAnimationFrame(scanFrame);
   }, [guests]);
 
   // Start scan loop when active
