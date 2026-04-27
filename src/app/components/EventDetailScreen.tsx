@@ -230,6 +230,8 @@ function FieldInput({
           style={{
             flex: 1, background: "transparent", border: "none", outline: "none",
             fontSize: "14px", color: "#3d4a5c",
+            width: 0,
+            minWidth: 0,
             ...(isPickerType ? {
               WebkitAppearance: "none" as React.CSSProperties["WebkitAppearance"],
               appearance: "none" as React.CSSProperties["appearance"],
