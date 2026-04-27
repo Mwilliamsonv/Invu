@@ -373,6 +373,21 @@ function GuestDetailSheet({
                 <span style={{ fontSize: "12px", color: "#8a9bb0" }}>ID:</span>
                 <span style={{ fontSize: "12px", color: "#3d4a5c", fontWeight: 600 }}>#{String(guest.id).padStart(4, "0")}</span>
               </div>
+              <div className="flex items-center gap-1.5 mt-1 min-w-0">
+                <Mail size={12} color="#8a9bb0" strokeWidth={2} />
+                <span
+                  style={{
+                    fontSize: "12px",
+                    color: guest.email ? "#6b7a8d" : "#a0aec0",
+                    fontWeight: 500,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {guest.email || "Sin correo"}
+                </span>
+              </div>
             </div>
             {/* Status badge */}
             <div
@@ -1402,6 +1417,23 @@ export function EventDetailScreen() {
     }
   };
 
+  const sendBulkInvitations = async (bulkGuests: Guest[]) => {
+    let sent = 0;
+    let failed = 0;
+
+    for (const guest of bulkGuests) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await sendInvitationForGuest(guest);
+        sent += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+
+    return { sent, failed };
+  };
+
   const handleResendInvitation = async (guestId: number) => {
     const guest = guests.find((g) => g.id === guestId);
     if (!guest) throw new Error("Invitado no encontrado.");
@@ -1417,16 +1449,43 @@ export function EventDetailScreen() {
 
   const handleBulkSuccess = async (parsed: ParsedGuest[]) => {
     if (!id) return;
+    let created = 0;
+    let createFailed = 0;
+    const createdGuests: Guest[] = [];
+
     for (const p of parsed) {
-      // eslint-disable-next-line no-await-in-loop
-      await addGuestToEvent(id, {
-        name: p.name,
-        phone: p.phone || "",
-        email: p.email,
-        isExtra: false,
-      });
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const createdGuest = await addGuestToEvent(id, {
+          name: p.name,
+          phone: p.phone || "",
+          email: p.email,
+          isExtra: false,
+        });
+
+        created += 1;
+        createdGuests.push({
+          docId: createdGuest.id,
+          id: createdGuest.guestNumber,
+          name: createdGuest.name,
+          email: createdGuest.email || undefined,
+          phone: p.phone || undefined,
+          present: false,
+          extra: false,
+          qrDataUrl: createdGuest.qrDataUrl,
+          inviteStatus: "pending",
+        });
+      } catch {
+        createFailed += 1;
+      }
     }
-    setHasBulkLoaded(true);
+
+    const { sent, failed } = await sendBulkInvitations(createdGuests);
+    setHasBulkLoaded(failed > 0 || createFailed > 0);
+    setGuestFeedback(
+      `Carga masiva completada. Creados: ${created}. Enviados: ${sent}. No enviados: ${failed + createFailed}.`,
+    );
+    setTimeout(() => setGuestFeedback(null), 6000);
     setActiveTab("invitados");
   };
 

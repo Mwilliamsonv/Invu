@@ -40,6 +40,10 @@ service cloud.firestore {
       match /guests/{guestId} {
         allow read, write: if isEventMember(eventId);
       }
+
+      match /raffleWinners/{winnerId} {
+        allow read, write: if isEventMember(eventId);
+      }
     }
   }
 }

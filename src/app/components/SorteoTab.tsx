@@ -300,12 +300,27 @@ function PrizeSheet({
   onSkip,
 }: {
   guest: SorteoGuest;
-  onConfirm: (prize: string) => void;
+  onConfirm: (prize: string) => Promise<void>;
   onSkip: () => void;
 }) {
   const [prize, setPrize]   = useState("");
   const [focus, setFocus]   = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const canSave = prize.trim().length > 0;
+
+  const handleConfirm = async () => {
+    if (!canSave || saving) return;
+    setErrorMsg(null);
+    try {
+      setSaving(true);
+      await onConfirm(prize.trim());
+    } catch (e: any) {
+      setErrorMsg(e?.message ?? "No se pudo guardar el ganador.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div
@@ -384,18 +399,21 @@ function PrizeSheet({
         <div className="flex gap-3">
           <button
             onClick={onSkip}
+            disabled={saving}
             style={{
               flex: 1, background: "#e8ecf0",
               boxShadow: "4px 4px 8px #b8bec7, -4px -4px 8px #ffffff",
               border: "none", borderRadius: 16, padding: "14px",
-              cursor: "pointer", fontSize: "14px", fontWeight: 600, color: "#8a9bb0",
+              cursor: saving ? "not-allowed" : "pointer",
+              fontSize: "14px", fontWeight: 600, color: "#8a9bb0",
+              opacity: saving ? 0.6 : 1,
             }}
           >
             Omitir
           </button>
           <button
-            onClick={() => { if (canSave) onConfirm(prize.trim()); }}
-            disabled={!canSave}
+            onClick={handleConfirm}
+            disabled={!canSave || saving}
             style={{
               flex: 1,
               background: canSave
@@ -405,16 +423,25 @@ function PrizeSheet({
                 ? "5px 5px 12px rgba(0,172,193,0.4), -2px -2px 8px rgba(255,255,255,0.5)"
                 : "inset 3px 3px 6px #b8bec7, inset -3px -3px 6px #ffffff",
               border: "none", borderRadius: 16, padding: "14px",
-              cursor: canSave ? "pointer" : "default",
+              cursor: canSave && !saving ? "pointer" : "default",
               fontSize: "14px", fontWeight: 600,
               color: canSave ? "#fff" : "#a0aec0",
               display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
             }}
           >
             <Check size={16} color={canSave ? "#fff" : "#a0aec0"} strokeWidth={2.2} />
-            Guardar
+            {saving ? "Guardando..." : "Guardar"}
           </button>
         </div>
+
+        {errorMsg && (
+          <div
+            className="rounded-xl px-3 py-2"
+            style={{ background: "rgba(229,62,62,0.12)", color: "#e53e3e", fontSize: "12px", fontWeight: 600 }}
+          >
+            {errorMsg}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -507,23 +534,18 @@ export function SorteoTab({ eventId, guests }: { eventId: string; guests: Sorteo
 
   const handleConfirmPrize = async (prize: string) => {
     if (!drawnGuest) return;
-    try {
-      const newWinnerId = await addRaffleWinner(eventId, {
-        guestId: drawnGuest.id,
-        guestName: drawnGuest.name,
-        guestBracelet: drawnGuest.bracelet,
-        prize,
-      });
-      setNewWinnerId(newWinnerId);
-      setTimeout(() => setNewWinnerId(null), 3000);
-      setDrawNotice("Ganador guardado.");
-      setTimeout(() => setDrawNotice(null), 2200);
-      setShowPrizeSheet(false);
-      setDrawnGuest(null);
-    } catch (e: any) {
-      setDrawNotice(e?.message ?? "No se pudo guardar el ganador.");
-      setTimeout(() => setDrawNotice(null), 3000);
-    }
+    const newWinnerId = await addRaffleWinner(eventId, {
+      guestId: drawnGuest.id,
+      guestName: drawnGuest.name,
+      guestBracelet: drawnGuest.bracelet,
+      prize,
+    });
+    setNewWinnerId(newWinnerId);
+    setTimeout(() => setNewWinnerId(null), 3000);
+    setDrawNotice("Ganador guardado.");
+    setTimeout(() => setDrawNotice(null), 2200);
+    setShowPrizeSheet(false);
+    setDrawnGuest(null);
   };
 
   const handleSkipPrize = () => {

@@ -258,6 +258,8 @@ export async function addGuestToEvent(eventId: string, input: CreateGuestInput) 
   const now = nowIso();
   const eventRef = doc(db, "events", eventId);
   const guestRef = doc(guestsRef);
+  let createdGuestNumber = 0;
+  let createdQrDataUrl = "";
 
   await runTransaction(db, async (tx) => {
     const eventSnap = await tx.get(eventRef);
@@ -268,6 +270,8 @@ export async function addGuestToEvent(eventId: string, input: CreateGuestInput) 
     const count = Number(eventSnap.data().guestCount ?? 0);
     const guestNumber = count + 1;
     const qrDataUrl = await generateGuestQrDataUrl(eventId, guestNumber, input.name);
+    createdGuestNumber = guestNumber;
+    createdQrDataUrl = qrDataUrl;
 
     tx.set(guestRef, {
       guestNumber,
@@ -292,6 +296,14 @@ export async function addGuestToEvent(eventId: string, input: CreateGuestInput) 
       updatedAt: now,
     });
   });
+
+  return {
+    id: guestRef.id,
+    guestNumber: createdGuestNumber,
+    name: input.name.trim(),
+    email: emailRaw,
+    qrDataUrl: createdQrDataUrl,
+  };
 }
 
 export async function markGuestPresent(
