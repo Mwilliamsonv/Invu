@@ -1,5 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Gift, Trophy, User, Hash, Tag, Check, Trash2, ChevronDown } from "lucide-react";
+import {
+  addRaffleWinner,
+  deleteRaffleWinner,
+  subscribeToRaffleWinners,
+} from "../lib/events";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export interface SorteoGuest {
@@ -13,7 +18,7 @@ interface Winner {
   id: string;
   guest: SorteoGuest;
   prize: string;
-  timestamp: Date;
+  timestamp: string;
 }
 
 // ── Tombola Canvas ────────────────────────────────────────────────────────────
@@ -416,9 +421,9 @@ function PrizeSheet({
 }
 
 // ── Main Sorteo Tab ───────────────────────────────────────────────────────────
-const TOTAL_SECONDS = 10;
+const TOTAL_SECONDS = 5;
 
-export function SorteoTab({ guests }: { guests: SorteoGuest[] }) {
+export function SorteoTab({ eventId, guests }: { eventId: string; guests: SorteoGuest[] }) {
   const [spinning, setSpinning]           = useState(false);
   const [countdown, setCountdown]         = useState(TOTAL_SECONDS);
   const [progress, setProgress]           = useState(0);          // 0→1 during spin
@@ -426,17 +431,53 @@ export function SorteoTab({ guests }: { guests: SorteoGuest[] }) {
   const [showPrizeSheet, setShowPrizeSheet] = useState(false);
   const [winners, setWinners]             = useState<Winner[]>([]);
   const [newWinnerId, setNewWinnerId]     = useState<string | null>(null);
+  const [drawNotice, setDrawNotice]       = useState<string | null>(null);
 
   const timerRef    = useRef<ReturnType<typeof setInterval> | null>(null);
   const startRef    = useRef(0);
 
-  // Eligible: present guests (or all guests if none present)
-  const eligiblePool = guests.filter((g) => g.present).length > 0
+  useEffect(() => {
+    if (!eventId) return;
+    const unsub = subscribeToRaffleWinners(eventId, (items) => {
+      const mapped: Winner[] = items.map((w) => {
+        const guestInList = guests.find((g) => g.id === w.guestId);
+        return {
+          id: w.id,
+          guest: guestInList ?? {
+            id: w.guestId,
+            name: w.guestName,
+            present: true,
+            extra: false,
+            bracelet: w.guestBracelet,
+          },
+          prize: w.prize,
+          timestamp: w.createdAt,
+        };
+      });
+      setWinners(mapped);
+    });
+    return () => unsub();
+  }, [eventId, guests]);
+
+  // Eligible: present guests (or all guests if none present), excluding previous winners.
+  const candidatePool = guests.filter((g) => g.present).length > 0
     ? guests.filter((g) => g.present)
     : guests;
+  const winnerIds = new Set(winners.map((w) => w.guest.id));
+  const eligiblePool = candidatePool.filter((g) => !winnerIds.has(g.id));
 
   const startSpin = () => {
-    if (spinning || eligiblePool.length === 0) return;
+    if (spinning) return;
+    if (eligiblePool.length === 0) {
+      setDrawNotice(
+        candidatePool.length === 0
+          ? "No hay invitados disponibles para sortear."
+          : "Todos los invitados ya han ganado.",
+      );
+      setTimeout(() => setDrawNotice(null), 2600);
+      return;
+    }
+    setDrawNotice(null);
     setSpinning(true);
     setCountdown(TOTAL_SECONDS);
     setProgress(0);
@@ -464,19 +505,25 @@ export function SorteoTab({ guests }: { guests: SorteoGuest[] }) {
 
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
 
-  const handleConfirmPrize = (prize: string) => {
+  const handleConfirmPrize = async (prize: string) => {
     if (!drawnGuest) return;
-    const newWinner: Winner = {
-      id: `${Date.now()}`,
-      guest: drawnGuest,
-      prize,
-      timestamp: new Date(),
-    };
-    setWinners((prev) => [newWinner, ...prev]);
-    setNewWinnerId(newWinner.id);
-    setTimeout(() => setNewWinnerId(null), 3000);
-    setShowPrizeSheet(false);
-    setDrawnGuest(null);
+    try {
+      const newWinnerId = await addRaffleWinner(eventId, {
+        guestId: drawnGuest.id,
+        guestName: drawnGuest.name,
+        guestBracelet: drawnGuest.bracelet,
+        prize,
+      });
+      setNewWinnerId(newWinnerId);
+      setTimeout(() => setNewWinnerId(null), 3000);
+      setDrawNotice("Ganador guardado.");
+      setTimeout(() => setDrawNotice(null), 2200);
+      setShowPrizeSheet(false);
+      setDrawnGuest(null);
+    } catch (e: any) {
+      setDrawNotice(e?.message ?? "No se pudo guardar el ganador.");
+      setTimeout(() => setDrawNotice(null), 3000);
+    }
   };
 
   const handleSkipPrize = () => {
@@ -484,11 +531,17 @@ export function SorteoTab({ guests }: { guests: SorteoGuest[] }) {
     setDrawnGuest(null);
   };
 
-  const handleDeleteWinner = (id: string) => {
-    setWinners((prev) => prev.filter((w) => w.id !== id));
+  const handleDeleteWinner = async (id: string) => {
+    try {
+      await deleteRaffleWinner(eventId, id);
+    } catch {
+      setDrawNotice("No se pudo eliminar el ganador.");
+      setTimeout(() => setDrawNotice(null), 3000);
+    }
   };
 
   const noEligible = eligiblePool.length === 0;
+  const allAlreadyWon = candidatePool.length > 0 && eligiblePool.length === 0;
 
   return (
     <>
@@ -532,8 +585,12 @@ export function SorteoTab({ guests }: { guests: SorteoGuest[] }) {
               style={{ background: "#e8ecf0", boxShadow: "inset 4px 4px 8px #b8bec7, inset -4px -4px 8px #ffffff" }}
             >
               <User size={18} color="#c8d0da" strokeWidth={1.8} />
-              <span style={{ fontSize: "13px", color: "#c8d0da", fontWeight: 600 }}>Sin invitados presentes</span>
-              <span style={{ fontSize: "11px", color: "#d4d8e0", fontWeight: 400 }}>Marcá invitados como presentes para sortear</span>
+              <span style={{ fontSize: "13px", color: "#c8d0da", fontWeight: 600 }}>
+                {allAlreadyWon ? "Todos los invitados ya han ganado" : "Sin invitados presentes"}
+              </span>
+              <span style={{ fontSize: "11px", color: "#d4d8e0", fontWeight: 400 }}>
+                {allAlreadyWon ? "No quedan participantes disponibles." : "Marcá invitados como presentes para sortear"}
+              </span>
             </div>
           ) : (
             <button
@@ -588,6 +645,20 @@ export function SorteoTab({ guests }: { guests: SorteoGuest[] }) {
               Seleccionando ganador entre {eligiblePool.length} invitados…
             </p>
           )}
+          {drawNotice && (
+            <div
+              className="w-full rounded-xl px-4 py-2.5"
+              style={{
+                background: "rgba(38,198,218,0.10)",
+                color: "#0f6f79",
+                fontSize: "12px",
+                fontWeight: 600,
+                textAlign: "center",
+              }}
+            >
+              {drawNotice}
+            </div>
+          )}
         </div>
 
         {/* ── Winners list ── */}
@@ -641,3 +712,7 @@ export function SorteoTab({ guests }: { guests: SorteoGuest[] }) {
     </>
   );
 }
+
+
+
+

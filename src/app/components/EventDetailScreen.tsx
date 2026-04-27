@@ -1485,7 +1485,7 @@ export function EventDetailScreen() {
       case "escanear":
         return <QRScannerTab guests={guests} onMarkPresent={handleUpdateGuest} />;
       case "sorteo":
-        return <SorteoTab guests={guests} />;
+        return <SorteoTab eventId={event.id} guests={guests} />;
       case "cuenta":
         return <CuentaTab />;
       default:

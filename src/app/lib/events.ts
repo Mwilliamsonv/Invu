@@ -2,6 +2,7 @@ import QRCode from "qrcode";
 import {
   arrayUnion,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -23,6 +24,7 @@ import type {
   EventStatus,
   GuestItem,
   GuestStatus,
+  RaffleWinnerItem,
 } from "../types/domain";
 
 function nowIso() {
@@ -64,6 +66,19 @@ function toGuestItem(id: string, data: any): GuestItem {
     inviteSentAt: data.inviteSentAt ?? "",
     inviteLastAttemptAt: data.inviteLastAttemptAt ?? "",
     inviteError: data.inviteError ?? "",
+    createdAt: data.createdAt ?? nowIso(),
+    updatedAt: data.updatedAt ?? nowIso(),
+  };
+}
+
+function toRaffleWinnerItem(id: string, data: any): RaffleWinnerItem {
+  return {
+    id,
+    guestId: Number(data.guestId ?? 0),
+    guestName: data.guestName ?? "",
+    guestBracelet:
+      typeof data.guestBracelet === "number" ? data.guestBracelet : undefined,
+    prize: data.prize ?? "",
     createdAt: data.createdAt ?? nowIso(),
     updatedAt: data.updatedAt ?? nowIso(),
   };
@@ -324,4 +339,58 @@ export async function deleteGuestFromEvent(eventId: string, guestId: string) {
     });
     tx.delete(guestRef);
   });
+}
+
+export function subscribeToRaffleWinners(
+  eventId: string,
+  onData: (winners: RaffleWinnerItem[]) => void,
+  onError?: (err: unknown) => void,
+) {
+  const q = query(
+    collection(db, "events", eventId, "raffleWinners"),
+    orderBy("createdAt", "desc"),
+  );
+
+  return onSnapshot(
+    q,
+    (snap) => {
+      const items = snap.docs.map((d) => toRaffleWinnerItem(d.id, d.data()));
+      onData(items);
+    },
+    onError,
+  );
+}
+
+export async function addRaffleWinner(
+  eventId: string,
+  payload: {
+    guestId: number;
+    guestName: string;
+    guestBracelet?: number;
+    prize: string;
+  },
+) {
+  const winnersRef = collection(db, "events", eventId, "raffleWinners");
+  const existsQ = query(winnersRef, where("guestId", "==", payload.guestId));
+  const existsSnap = await getDocs(existsQ);
+  if (!existsSnap.empty) {
+    throw new Error("Este invitado ya ganó anteriormente.");
+  }
+
+  const now = nowIso();
+  const winnerRef = doc(winnersRef);
+  await setDoc(winnerRef, {
+    guestId: payload.guestId,
+    guestName: payload.guestName,
+    guestBracelet: payload.guestBracelet ?? null,
+    prize: payload.prize.trim(),
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  return winnerRef.id;
+}
+
+export async function deleteRaffleWinner(eventId: string, winnerId: string) {
+  await deleteDoc(doc(db, "events", eventId, "raffleWinners", winnerId));
 }

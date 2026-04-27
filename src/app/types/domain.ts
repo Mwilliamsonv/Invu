@@ -55,6 +55,16 @@ export interface GuestItem {
   updatedAt: string;
 }
 
+export interface RaffleWinnerItem {
+  id: string;
+  guestId: number;
+  guestName: string;
+  guestBracelet?: number;
+  prize: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CreateEventInput {
   name: string;
   status?: EventStatus;
