@@ -35,6 +35,7 @@ export async function sendInvitationEmail(params: {
   to: string;
   subject: string;
   html: string;
+  qrDataUrl?: string;
 }) {
   const currentUser = auth.currentUser;
   if (!currentUser) {
@@ -43,13 +44,20 @@ export async function sendInvitationEmail(params: {
   const token = await currentUser.getIdToken();
   const endpoint = import.meta.env.VITE_INVITE_API_URL || DEFAULT_INVITE_API_URL;
 
+  const payload = {
+    to: params.to,
+    subject: params.subject,
+    html: params.html,
+    qrDataUrl: params.qrDataUrl,
+  };
+
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify(params),
+    body: JSON.stringify(payload),
   });
 
   const body = await response.json().catch(() => ({}));

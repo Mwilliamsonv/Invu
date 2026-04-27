@@ -8,6 +8,33 @@ admin.initializeApp();
 const resendApiKey = defineSecret("RESEND_API_KEY");
 const resendFrom = defineSecret("RESEND_FROM_EMAIL");
 
+function extractInlineQrAttachment(html) {
+  if (typeof html !== "string" || !html.includes("data:image")) {
+    return { html, attachment: null };
+  }
+
+  const dataUriRegex = /src="(data:image\/([a-zA-Z0-9.+-]+);base64,([^"]+))"/i;
+  const match = html.match(dataUriRegex);
+  if (!match) return { html, attachment: null };
+
+  const mimeType = `image/${(match[2] || "png").toLowerCase()}`;
+  const base64Content = (match[3] || "").trim();
+  if (!base64Content) return { html, attachment: null };
+
+  const cid = "invite-qr";
+  const safeHtml = html.replace(match[1], `cid:${cid}`);
+
+  return {
+    html: safeHtml,
+    attachment: {
+      filename: "codigo-qr.png",
+      content: base64Content,
+      contentType: mimeType,
+      cid,
+    },
+  };
+}
+
 function cors(res) {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
@@ -49,12 +76,14 @@ exports.sendInvitationEmail = onRequest(
     }
 
     try {
+      const { html: finalHtml, attachment } = extractInlineQrAttachment(html);
       const resend = new Resend(resendApiKey.value());
       const result = await resend.emails.send({
         from: resendFrom.value(),
         to,
         subject,
-        html,
+        html: finalHtml,
+        attachments: attachment ? [attachment] : undefined,
       });
 
       res.status(200).json({ ok: true, id: result?.data?.id || null });

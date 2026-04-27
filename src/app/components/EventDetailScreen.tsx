@@ -1389,6 +1389,7 @@ export function EventDetailScreen() {
         to: guest.email,
         subject: `Tu invitación al evento ${event?.name ?? ""}`.trim(),
         html,
+        qrDataUrl,
       });
 
       await setGuestInvitationStatus(id, guest.docId, { status: "sent" });

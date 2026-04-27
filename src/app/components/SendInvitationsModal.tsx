@@ -68,6 +68,7 @@ async function processGuest(
     to: guest.email,
     subject: "Tu invitación con código QR",
     html,
+    qrDataUrl: qrUrl,
   });
 
   onUpdate("done", qrUrl);
