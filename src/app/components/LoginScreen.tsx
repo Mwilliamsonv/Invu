@@ -62,7 +62,7 @@ export function LoginScreen() {
         <button
           onClick={onGoogle}
           disabled={loading}
-          className="w-full py-4 rounded-2xl mb-4"
+          className="w-full py-4 rounded-2xl mb-4 flex items-center justify-center gap-3"
           style={{
             background: "#e8ecf0",
             boxShadow: "6px 6px 12px #b8bec7, -6px -6px 12px #ffffff",
@@ -72,6 +72,24 @@ export function LoginScreen() {
             color: "#4a5568",
           }}
         >
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="#EA4335"
+              d="M12 10.2v3.9h5.4c-.24 1.25-.96 2.3-2.04 3.02l3.3 2.56c1.92-1.77 3.03-4.37 3.03-7.48 0-.72-.06-1.42-.2-2.1H12z"
+            />
+            <path
+              fill="#34A853"
+              d="M12 22c2.7 0 4.96-.9 6.61-2.44l-3.3-2.56c-.92.62-2.1.99-3.31.99-2.55 0-4.71-1.73-5.49-4.06H3.1v2.64A10 10 0 0 0 12 22z"
+            />
+            <path
+              fill="#FBBC05"
+              d="M6.51 13.93A6 6 0 0 1 6.2 12c0-.67.11-1.31.31-1.93V7.43H3.1A10 10 0 0 0 2 12c0 1.61.38 3.13 1.1 4.5l3.41-2.57z"
+            />
+            <path
+              fill="#4285F4"
+              d="M12 5.98c1.47 0 2.8.5 3.84 1.47l2.88-2.88C16.95 2.93 14.7 2 12 2A10 10 0 0 0 3.1 7.43l3.41 2.64c.78-2.33 2.94-4.09 5.49-4.09z"
+            />
+          </svg>
           Continuar con Google
         </button>
 
