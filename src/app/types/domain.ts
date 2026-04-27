@@ -26,6 +26,7 @@ export interface EventItem {
   status: EventStatus;
   date: string;
   time: string;
+  guestCount?: number;
   location: string;
   description: string;
   memberIds: string[];
@@ -61,6 +62,6 @@ export interface CreateEventInput {
 export interface CreateGuestInput {
   name: string;
   phone?: string;
-  email: string;
+  email?: string;
   isExtra?: boolean;
 }

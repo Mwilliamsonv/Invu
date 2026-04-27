@@ -3,7 +3,7 @@ import { LoginScreen } from "./components/LoginScreen";
 import { HomeScreen } from "./components/HomeScreen";
 import { RegisterScreen } from "./components/RegisterScreen";
 import { ProtectedRoute } from "./components/ProtectedRoute";
-import { EventDetailRealtimeScreen } from "./components/EventDetailRealtimeScreen";
+import { EventDetailScreen } from "./components/EventDetailScreen";
 
 export const router = createBrowserRouter([
   {
@@ -25,8 +25,8 @@ export const router = createBrowserRouter([
   {
     path: "/event/:id",
     Component: () => (
-        <ProtectedRoute>
-        <EventDetailRealtimeScreen />
+      <ProtectedRoute>
+        <EventDetailScreen />
       </ProtectedRoute>
     ),
   },

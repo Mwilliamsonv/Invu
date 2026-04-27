@@ -5,9 +5,18 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function eventDoc(eventId) {
+      return /databases/$(database)/documents/events/$(eventId);
+    }
+
     function isEventMember(eventId) {
       return isSignedIn() &&
-        exists(/databases/$(database)/documents/events/$(eventId)/members/$(request.auth.uid));
+        get(eventDoc(eventId)).data.memberIds.hasAny([request.auth.uid]);
+    }
+
+    function isEventCreatorAfterWrite(eventId) {
+      return isSignedIn() &&
+        getAfter(eventDoc(eventId)).data.createdBy == request.auth.uid;
     }
 
     match /users/{userId} {
@@ -15,13 +24,17 @@ service cloud.firestore {
     }
 
     match /events/{eventId} {
-      allow read: if isEventMember(eventId);
+      allow read: if isSignedIn() &&
+        resource.data.memberIds.hasAny([request.auth.uid]);
       allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
       allow update, delete: if isEventMember(eventId);
 
       match /members/{memberId} {
         allow read: if isEventMember(eventId);
-        allow create, update, delete: if isEventMember(eventId);
+        allow create: if isEventMember(eventId) || (
+          request.auth.uid == memberId && isEventCreatorAfterWrite(eventId)
+        );
+        allow update, delete: if isEventMember(eventId);
       }
 
       match /guests/{guestId} {

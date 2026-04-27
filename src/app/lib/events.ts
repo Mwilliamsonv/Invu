@@ -36,6 +36,7 @@ function toEventItem(id: string, data: any): EventItem {
     status: (data.status ?? "pendiente") as EventStatus,
     date: data.date ?? "",
     time: data.time ?? "",
+    guestCount: Number(data.guestCount ?? 0),
     location: data.location ?? "",
     description: data.description ?? "",
     memberIds: Array.isArray(data.memberIds) ? data.memberIds : [],
@@ -111,6 +112,7 @@ export async function createEventForUser(
     status: input.status ?? "pendiente",
     date: input.date,
     time: input.time,
+    guestCount: 0,
     location: input.location?.trim() ?? "",
     description: input.description?.trim() ?? "",
     memberIds: [uid],
@@ -214,16 +216,22 @@ export function subscribeToGuests(
 }
 
 export async function addGuestToEvent(eventId: string, input: CreateGuestInput) {
-  const emailKey = input.email.trim().toLowerCase();
-  if (!emailKey) {
-    throw new Error("El email del invitado es obligatorio.");
+  const emailRaw = (input.email ?? "").trim();
+  const emailKey = emailRaw.toLowerCase();
+  const isExtra = Boolean(input.isExtra);
+  const shouldMarkPresent = isExtra;
+
+  if (!emailKey && !isExtra) {
+    throw new Error("El email del invitado es obligatorio para este tipo de evento.");
   }
 
   const guestsRef = collection(db, "events", eventId, "guests");
-  const existsQuery = query(guestsRef, where("emailKey", "==", emailKey));
-  const existsSnap = await getDocs(existsQuery);
-  if (!existsSnap.empty) {
-    throw new Error("Ya existe un invitado con ese email en este evento.");
+  if (emailKey) {
+    const existsQuery = query(guestsRef, where("emailKey", "==", emailKey));
+    const existsSnap = await getDocs(existsQuery);
+    if (!existsSnap.empty) {
+      throw new Error("Ya existe un invitado con ese email en este evento.");
+    }
   }
 
   const now = nowIso();
@@ -244,10 +252,10 @@ export async function addGuestToEvent(eventId: string, input: CreateGuestInput) 
       guestNumber,
       name: input.name.trim(),
       phone: input.phone?.trim() ?? "",
-      email: input.email.trim(),
+      email: emailRaw,
       emailKey,
-      status: "ausente",
-      isExtra: Boolean(input.isExtra),
+      status: shouldMarkPresent ? "presente" : "ausente",
+      isExtra,
       qrDataUrl,
       createdAt: now,
       updatedAt: now,

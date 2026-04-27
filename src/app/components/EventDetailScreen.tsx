@@ -1,7 +1,7 @@
 import { QRScannerTab } from "./QRScannerTab";
 import { SorteoTab } from "./SorteoTab";
 import { CuentaTab } from "./CuentaTab";
-import { useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import {
   Calendar,
@@ -30,6 +30,13 @@ import {
 } from "lucide-react";
 import { BulkUploadModal, type ParsedGuest } from "./BulkUploadModal";
 import { SendInvitationsModal, type GuestToInvite } from "./SendInvitationsModal";
+import {
+  addGuestToEvent,
+  getEventById,
+  markGuestPresent,
+  subscribeToGuests,
+} from "../lib/events";
+import type { EventItem, GuestItem } from "../types/domain";
 
 const TODAY = new Date().toISOString().split("T")[0];
 
@@ -37,7 +44,7 @@ const TODAY = new Date().toISOString().split("T")[0];
 type EventStatus = "realizado" | "pendiente" | "cancelado" | "en_curso";
 
 interface AppEvent {
-  id: number;
+  id: string;
   name: string;
   date: string;
   time: string;
@@ -48,6 +55,7 @@ interface AppEvent {
 }
 
 interface Guest {
+  docId?: string;
   id: number;
   name: string;
   email?: string;
@@ -55,18 +63,8 @@ interface Guest {
   present: boolean;
   extra: boolean;
   bracelet?: number;
+  qrDataUrl?: string;
 }
-
-const MOCK_GUESTS: Guest[] = [
-  { id: 1, name: "María González",  email: "maria@ejemplo.com",  present: true,  extra: false, bracelet: 101 },
-  { id: 2, name: "Carlos Ramírez",  email: "carlos@ejemplo.com", present: true,  extra: false, bracelet: 102 },
-  { id: 3, name: "Sofía Herrera",   email: "sofia@ejemplo.com",  present: false, extra: false },
-  { id: 4, name: "Andrés Mora",     email: "andres@ejemplo.com", present: true,  extra: true,  bracelet: 103 },
-  { id: 5, name: "Valentina Cruz",  email: "vale@ejemplo.com",   present: false, extra: false },
-  { id: 6, name: "Diego Fernández", email: "diego@ejemplo.com",  present: false, extra: true  },
-  { id: 7, name: "Camila Torres",   email: "camila@ejemplo.com", present: false, extra: false },
-  { id: 8, name: "Luis Martínez",   email: "luis@ejemplo.com",   present: false, extra: false },
-];
 
 // ── Status config ─────────────────────────────────────────────────────────────
 const STATUS_LABELS: Record<string, { label: string; color: string; bg: string }> = {
@@ -1086,62 +1084,110 @@ function PlaceholderTab({ label, Icon }: { label: string; Icon: React.ElementTyp
 }
 
 // ── Main Screen ───────────────────────────────────────────────────────────────
-export function EventDetailScreen({ events }: { events: AppEvent[] }) {
-  const { id }   = useParams<{ id: string }>();
+export function EventDetailScreen() {
+  const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab]             = useState<NavTab>("eventos");
-  const [guests, setGuests]                   = useState<Guest[]>(MOCK_GUESTS);
-  const [showAddGuest, setShowAddGuest]       = useState(false);
-  const [showBulkModal, setShowBulkModal]     = useState(false);
+  const [activeTab, setActiveTab] = useState<NavTab>("eventos");
+  const [event, setEvent] = useState<AppEvent | null>(null);
+  const [guests, setGuests] = useState<Guest[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAddGuest, setShowAddGuest] = useState(false);
+  const [showBulkModal, setShowBulkModal] = useState(false);
   const [showSendInvitations, setShowSendInvitations] = useState(false);
-  const [hasBulkLoaded, setHasBulkLoaded]     = useState(false);
-  const [guestToInvite, setGuestToInvite]     = useState<GuestToInvite | null>(null);
+  const [hasBulkLoaded, setHasBulkLoaded] = useState(false);
+  const [guestToInvite, setGuestToInvite] = useState<GuestToInvite | null>(null);
 
-  const event = events.find((e) => String(e.id) === id);
+  useEffect(() => {
+    if (!id) return;
+    let alive = true;
+    setLoading(true);
+    getEventById(id)
+      .then((data: EventItem | null) => {
+        if (!alive) return;
+        if (!data) {
+          setEvent(null);
+          return;
+        }
+        setEvent({
+          id: data.id,
+          name: data.name,
+          date: data.date,
+          time: data.time,
+          status: data.status as EventStatus,
+          guests: 0,
+          location: data.location,
+          description: data.description,
+        });
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [id]);
 
-  const isEnCurso   = Boolean(event && event.date === TODAY && event.status !== "cancelado");
+  useEffect(() => {
+    if (!id) return;
+    const unsub = subscribeToGuests(id, (items: GuestItem[]) => {
+      const mapped: Guest[] = items.map((g) => ({
+        docId: g.id,
+        id: g.guestNumber,
+        name: g.name,
+        email: g.email || undefined,
+        phone: g.phone || undefined,
+        present: g.status === "presente",
+        extra: g.isExtra,
+        bracelet: g.braceletNumber,
+        qrDataUrl: g.qrDataUrl,
+      }));
+      setGuests(mapped);
+      setEvent((prev) => (prev ? { ...prev, guests: mapped.length } : prev));
+    });
+    return () => unsub();
+  }, [id]);
+
+  const isEnCurso = Boolean(event && event.date === TODAY && event.status !== "cancelado");
   const isPendiente = Boolean(event && event.status === "pendiente");
-  const canAdd      = Boolean(event && event.status !== "realizado" && event.status !== "cancelado");
+  const canAdd = Boolean(event && event.status !== "realizado" && event.status !== "cancelado");
 
-  const handleUpdateGuest = (guestId: number, bracelet: number) => {
-    setGuests((prev) =>
-      prev.map((g) => g.id === guestId ? { ...g, present: true, bracelet } : g)
-    );
+  const handleUpdateGuest = async (guestId: number, bracelet: number) => {
+    if (!id) return;
+    const target = guests.find((g) => g.id === guestId);
+    if (!target?.docId) return;
+    await markGuestPresent(id, target.docId, bracelet);
   };
 
-  const handleAddGuest = (name: string, phone: string, email: string) => {
-    const newId = Math.max(...guests.map((g) => g.id), 0) + 1;
-    const newGuest: Guest = {
-      id: newId,
+  const handleAddGuest = async (name: string, phone: string, email: string) => {
+    if (!id) return;
+    const trimmedEmail = email.trim();
+    await addGuestToEvent(id, {
       name,
-      email: email || undefined,
-      phone: phone || undefined,
-      present: false,
-      extra: isEnCurso,
-    };
-    setGuests((prev) => [...prev, newGuest]);
-    // Trigger QR + invite flow for pendiente events
-    if (isPendiente) {
-      setGuestToInvite({ id: newId, name, email: email || undefined });
+      phone,
+      email: trimmedEmail || undefined,
+      isExtra: isEnCurso,
+    });
+    if (isPendiente && !isEnCurso && trimmedEmail) {
+      const nextId = Math.max(...guests.map((g) => g.id), 0) + 1;
+      setGuestToInvite({ id: nextId, name, email: trimmedEmail });
     }
   };
 
-  const handleBulkSuccess = (parsed: ParsedGuest[]) => {
-    const baseId = Math.max(...guests.map((g) => g.id), 0);
-    const newGuests: Guest[] = parsed.map((p, i) => ({
-      id: baseId + i + 1,
-      name: p.name,
-      email: p.email || undefined,
-      phone: p.phone || undefined,
-      present: false,
-      extra: false,
-    }));
-    setGuests((prev) => [...prev, ...newGuests]);
+  const handleBulkSuccess = async (parsed: ParsedGuest[]) => {
+    if (!id) return;
+    for (const p of parsed) {
+      // eslint-disable-next-line no-await-in-loop
+      await addGuestToEvent(id, {
+        name: p.name,
+        phone: p.phone || "",
+        email: p.email,
+        isExtra: false,
+      });
+    }
     setHasBulkLoaded(true);
     setActiveTab("invitados");
   };
 
-  // Guests to send invitations to
   const inviteGuests: GuestToInvite[] = guestToInvite
     ? [guestToInvite]
     : guests.map((g) => ({ id: g.id, name: g.name, email: g.email }));
@@ -1151,6 +1197,14 @@ export function EventDetailScreen({ events }: { events: AppEvent[] }) {
     setGuestToInvite(null);
     setHasBulkLoaded(false);
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#e8ecf0" }}>
+        <p style={{ color: "#8a9bb0" }}>Cargando evento...</p>
+      </div>
+    );
+  }
 
   if (!event) {
     return (
@@ -1190,14 +1244,14 @@ export function EventDetailScreen({ events }: { events: AppEvent[] }) {
         return <SorteoTab guests={guests} />;
       case "cuenta":
         return <CuentaTab />;
+      default:
+        return null;
     }
   };
 
   return (
     <div className="min-h-screen w-full flex justify-center" style={{ background: "#e8ecf0" }}>
       <div className="w-full max-w-[390px] min-h-screen flex flex-col" style={{ background: "#e8ecf0" }}>
-
-        {/* Header */}
         <div className="px-6 pt-14 pb-4 flex items-center gap-3">
           <button
             onClick={() => navigate("/home")}
@@ -1214,7 +1268,6 @@ export function EventDetailScreen({ events }: { events: AppEvent[] }) {
           </div>
         </div>
 
-        {/* Content */}
         <div className="flex-1 px-6 pb-36 overflow-y-auto">
           {renderTab()}
         </div>
@@ -1222,7 +1275,6 @@ export function EventDetailScreen({ events }: { events: AppEvent[] }) {
         <BottomNav active={activeTab} onChange={setActiveTab} />
       </div>
 
-      {/* Add guest modal */}
       {showAddGuest && (
         <AddGuestModal
           isEnCurso={isEnCurso}
@@ -1232,7 +1284,6 @@ export function EventDetailScreen({ events }: { events: AppEvent[] }) {
         />
       )}
 
-      {/* Bulk upload modal — pendiente only */}
       {showBulkModal && (
         <BulkUploadModal
           eventName={event.name}
@@ -1241,7 +1292,6 @@ export function EventDetailScreen({ events }: { events: AppEvent[] }) {
         />
       )}
 
-      {/* Send invitations modal — after bulk load or single guest add (pendiente) */}
       {(showSendInvitations || guestToInvite !== null) && (
         <SendInvitationsModal
           guests={inviteGuests}

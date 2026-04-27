@@ -9,6 +9,7 @@ import {
   Users,
   QrCode,
 } from "lucide-react";
+import { buildInviteHtml, sendInvitationEmail } from "../lib/email";
 
 export interface GuestToInvite {
   id: number;
@@ -32,6 +33,7 @@ interface GuestStatus {
 // ── Simulates sending one invite (QR generation + email) ─────────────────────
 async function processGuest(
   guest: GuestToInvite,
+  message: string,
   onUpdate: (status: GuestStatus["status"], qrUrl?: string) => void
 ) {
   onUpdate("generating");
@@ -45,7 +47,24 @@ async function processGuest(
   });
 
   onUpdate("sending", qrUrl);
-  await delay(500 + Math.random() * 400);
+  await delay(150 + Math.random() * 250);
+
+  if (!guest.email) {
+    onUpdate("error", qrUrl);
+    return;
+  }
+
+  const html = buildInviteHtml({
+    guestName: guest.name,
+    message,
+    qrDataUrl: qrUrl,
+  });
+
+  await sendInvitationEmail({
+    to: guest.email,
+    subject: "Tu invitación con código QR",
+    html,
+  });
 
   onUpdate("done", qrUrl);
 }
@@ -137,7 +156,11 @@ export function SendInvitationsModal({ guests, onClose }: SendInvitationsModalPr
         }
       };
 
-      await processGuest(guest, updateStatus);
+      try {
+        await processGuest(guest, message, updateStatus);
+      } catch (_) {
+        updateStatus("error");
+      }
     }
 
     setStep("done");
