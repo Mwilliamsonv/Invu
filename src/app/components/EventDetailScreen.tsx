@@ -702,7 +702,7 @@ function AddGuestModal({
   isEnCurso: boolean;
   isPendiente: boolean;
   onClose: () => void;
-  onSave: (name: string, phone: string, email: string) => void;
+  onSave: (name: string, phone: string, email: string) => Promise<void>;
 }) {
   const [name, setName]             = useState("");
   const [phone, setPhone]           = useState("");
@@ -710,6 +710,9 @@ function AddGuestModal({
   const [nameFocus, setNameFocus]   = useState(false);
   const [phoneFocus, setPhoneFocus] = useState(false);
   const [emailFocus, setEmailFocus] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   const requireEmail = isPendiente && !isEnCurso;
 
@@ -717,10 +720,20 @@ function AddGuestModal({
     ? name.trim().length > 0 && email.trim().length > 0 && email.includes("@")
     : name.trim().length > 0;
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!canSave) return;
-    onSave(name.trim(), phone.trim(), email.trim());
-    onClose();
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    try {
+      setSaving(true);
+      await onSave(name.trim(), phone.trim(), email.trim());
+      setSuccessMsg("Invitado guardado correctamente.");
+      onClose();
+    } catch (e: any) {
+      setErrorMsg(e?.message ?? "No se pudo guardar el invitado.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const inputBox = (focused: boolean) => ({
@@ -765,6 +778,23 @@ function AddGuestModal({
             )}
           </div>
         </div>
+
+        {errorMsg && (
+          <div
+            className="rounded-xl px-3 py-2"
+            style={{ background: "rgba(229,62,62,0.12)", color: "#e53e3e", fontSize: "12px", fontWeight: 600 }}
+          >
+            {errorMsg}
+          </div>
+        )}
+        {successMsg && (
+          <div
+            className="rounded-xl px-3 py-2"
+            style={{ background: "rgba(0,137,123,0.12)", color: "#00897b", fontSize: "12px", fontWeight: 600 }}
+          >
+            {successMsg}
+          </div>
+        )}
 
         {/* EMAIL — first & prominent for pendiente (not for en_curso) */}
         {requireEmail && (
@@ -871,11 +901,12 @@ function AddGuestModal({
         <div className="flex gap-3 mt-1">
           <button
             onClick={onClose}
+            disabled={saving}
             className="flex-1 py-4 rounded-2xl"
             style={{
               background: "#e8ecf0",
               boxShadow: "4px 4px 8px #b8bec7, -4px -4px 8px #ffffff",
-              border: "none", cursor: "pointer",
+              border: "none", cursor: saving ? "default" : "pointer",
               fontSize: "15px", fontWeight: 600, color: "#8a9bb0",
             }}
           >
@@ -883,21 +914,21 @@ function AddGuestModal({
           </button>
           <button
             onClick={handleSave}
-            disabled={!canSave}
+            disabled={!canSave || saving}
             className="flex-1 py-4 rounded-2xl transition-all duration-150 active:scale-[0.97]"
             style={{
-              background: canSave
+              background: canSave && !saving
                 ? "linear-gradient(135deg, #26c6da 0%, #00acc1 100%)"
                 : "#e8ecf0",
-              boxShadow: canSave
+              boxShadow: canSave && !saving
                 ? "5px 5px 12px rgba(0,172,193,0.4), -2px -2px 8px rgba(255,255,255,0.5)"
                 : "inset 3px 3px 6px #b8bec7, inset -3px -3px 6px #ffffff",
-              border: "none", cursor: canSave ? "pointer" : "default",
+              border: "none", cursor: canSave && !saving ? "pointer" : "default",
               fontSize: "15px", fontWeight: 600,
-              color: canSave ? "#fff" : "#a0aec0",
+              color: canSave && !saving ? "#fff" : "#a0aec0",
             }}
           >
-            Guardar
+            {saving ? "Guardando..." : "Guardar"}
           </button>
         </div>
       </div>
@@ -1249,6 +1280,7 @@ export function EventDetailScreen() {
   const [showSendInvitations, setShowSendInvitations] = useState(false);
   const [hasBulkLoaded, setHasBulkLoaded] = useState(false);
   const [guestToInvite, setGuestToInvite] = useState<GuestToInvite | null>(null);
+  const [guestFeedback, setGuestFeedback] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -1324,6 +1356,8 @@ export function EventDetailScreen() {
       email: trimmedEmail || undefined,
       isExtra: isEnCurso,
     });
+    setGuestFeedback("Invitado guardado correctamente.");
+    setTimeout(() => setGuestFeedback(null), 2200);
     if (isPendiente && !isEnCurso && trimmedEmail) {
       const nextId = Math.max(...guests.map((g) => g.id), 0) + 1;
       setGuestToInvite({ id: nextId, name, email: trimmedEmail });
@@ -1478,6 +1512,14 @@ export function EventDetailScreen() {
         </div>
 
         <div className="flex-1 px-6 pb-36 overflow-y-auto">
+          {guestFeedback && (
+            <div
+              className="mb-4 rounded-2xl px-4 py-3"
+              style={{ background: "rgba(0,137,123,0.12)", color: "#00897b", fontSize: "12px", fontWeight: 600 }}
+            >
+              {guestFeedback}
+            </div>
+          )}
           {renderTab()}
         </div>
 
