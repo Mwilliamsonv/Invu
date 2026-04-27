@@ -1,0 +1,32 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEventMember(eventId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/events/$(eventId)/members/$(request.auth.uid));
+    }
+
+    match /users/{userId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    match /events/{eventId} {
+      allow read: if isEventMember(eventId);
+      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if isEventMember(eventId);
+
+      match /members/{memberId} {
+        allow read: if isEventMember(eventId);
+        allow create, update, delete: if isEventMember(eventId);
+      }
+
+      match /guests/{guestId} {
+        allow read, write: if isEventMember(eventId);
+      }
+    }
+  }
+}

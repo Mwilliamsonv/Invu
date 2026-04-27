@@ -2,36 +2,30 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useAuth } from "../providers/AuthProvider";
 
-export function LoginScreen() {
+export function RegisterScreen() {
   const navigate = useNavigate();
-  const { loginEmail, loginGoogle } = useAuth();
+  const { registerEmail } = useAuth();
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function onGoogle() {
-    try {
-      setLoading(true);
-      setError(null);
-      await loginGoogle();
-      navigate("/home");
-    } catch (e: any) {
-      setError(e?.message ?? "No se pudo iniciar sesión con Google.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (password !== confirm) {
+      setError("Las contraseñas no coinciden.");
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
-      await loginEmail(email, password);
+      await registerEmail(name, email, password);
       navigate("/home");
     } catch (e: any) {
-      setError(e?.message ?? "Credenciales inválidas.");
+      setError(e?.message ?? "No se pudo crear la cuenta.");
     } finally {
       setLoading(false);
     }
@@ -44,10 +38,10 @@ export function LoginScreen() {
     >
       <div className="w-full max-w-[390px] min-h-screen px-8 py-12 flex flex-col justify-center">
         <h1 style={{ fontSize: "28px", fontWeight: 700, color: "#3d4a5c", marginBottom: 4 }}>
-          Iniciar sesión
+          Crear cuenta
         </h1>
         <p style={{ color: "#8a9bb0", marginBottom: 24 }}>
-          Accede a tus eventos y lista de invitados.
+          Regístrate para administrar tus eventos.
         </p>
 
         {error && (
@@ -59,23 +53,20 @@ export function LoginScreen() {
           </div>
         )}
 
-        <button
-          onClick={onGoogle}
-          disabled={loading}
-          className="w-full py-4 rounded-2xl mb-4"
-          style={{
-            background: "#e8ecf0",
-            boxShadow: "6px 6px 12px #b8bec7, -6px -6px 12px #ffffff",
-            border: "none",
-            cursor: "pointer",
-            fontWeight: 600,
-            color: "#4a5568",
-          }}
-        >
-          Continuar con Google
-        </button>
-
         <form onSubmit={onSubmit} className="flex flex-col gap-3">
+          <input
+            type="text"
+            placeholder="Nombre"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+            className="rounded-2xl px-4 py-4 outline-none"
+            style={{
+              border: "none",
+              background: "#e8ecf0",
+              boxShadow: "inset 4px 4px 8px #b8bec7, inset -4px -4px 8px #ffffff",
+            }}
+          />
           <input
             type="email"
             placeholder="Correo"
@@ -94,6 +85,21 @@ export function LoginScreen() {
             placeholder="Contraseña"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            minLength={6}
+            required
+            className="rounded-2xl px-4 py-4 outline-none"
+            style={{
+              border: "none",
+              background: "#e8ecf0",
+              boxShadow: "inset 4px 4px 8px #b8bec7, inset -4px -4px 8px #ffffff",
+            }}
+          />
+          <input
+            type="password"
+            placeholder="Confirmar contraseña"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            minLength={6}
             required
             className="rounded-2xl px-4 py-4 outline-none"
             style={{
@@ -115,14 +121,14 @@ export function LoginScreen() {
               cursor: "pointer",
             }}
           >
-            {loading ? "Ingresando..." : "Ingresar"}
+            {loading ? "Creando..." : "Crear cuenta"}
           </button>
         </form>
 
         <p style={{ marginTop: 16, color: "#8a9bb0", fontSize: 14 }}>
-          ¿No tienes cuenta?{" "}
-          <Link to="/register" style={{ color: "#00acc1", fontWeight: 700 }}>
-            Crear cuenta
+          ¿Ya tienes cuenta?{" "}
+          <Link to="/" style={{ color: "#00acc1", fontWeight: 700 }}>
+            Iniciar sesión
           </Link>
         </p>
       </div>
