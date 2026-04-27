@@ -37,6 +37,7 @@ function toEventItem(id: string, data: any): EventItem {
     date: data.date ?? "",
     time: data.time ?? "",
     guestCount: Number(data.guestCount ?? 0),
+    currentGuestCount: Number(data.currentGuestCount ?? 0),
     location: data.location ?? "",
     description: data.description ?? "",
     memberIds: Array.isArray(data.memberIds) ? data.memberIds : [],
@@ -59,6 +60,10 @@ function toGuestItem(id: string, data: any): GuestItem {
     qrDataUrl: data.qrDataUrl ?? "",
     braceletNumber:
       typeof data.braceletNumber === "number" ? data.braceletNumber : undefined,
+    inviteStatus: data.inviteStatus ?? "pending",
+    inviteSentAt: data.inviteSentAt ?? "",
+    inviteLastAttemptAt: data.inviteLastAttemptAt ?? "",
+    inviteError: data.inviteError ?? "",
     createdAt: data.createdAt ?? nowIso(),
     updatedAt: data.updatedAt ?? nowIso(),
   };
@@ -113,6 +118,7 @@ export async function createEventForUser(
     date: input.date,
     time: input.time,
     guestCount: 0,
+    currentGuestCount: 0,
     location: input.location?.trim() ?? "",
     description: input.description?.trim() ?? "",
     memberIds: [uid],
@@ -256,6 +262,10 @@ export async function addGuestToEvent(eventId: string, input: CreateGuestInput) 
       emailKey,
       status: shouldMarkPresent ? "presente" : "ausente",
       isExtra,
+      inviteStatus: "pending",
+      inviteError: "",
+      inviteLastAttemptAt: "",
+      inviteSentAt: "",
       qrDataUrl,
       createdAt: now,
       updatedAt: now,
@@ -263,6 +273,7 @@ export async function addGuestToEvent(eventId: string, input: CreateGuestInput) 
 
     tx.update(eventRef, {
       guestCount: guestNumber,
+      currentGuestCount: Number(eventSnap.data().currentGuestCount ?? 0) + 1,
       updatedAt: now,
     });
   });
@@ -278,5 +289,39 @@ export async function markGuestPresent(
     status: "presente",
     braceletNumber,
     updatedAt: nowIso(),
+  });
+}
+
+export async function setGuestInvitationStatus(
+  eventId: string,
+  guestId: string,
+  payload: { status: "pending" | "sent" | "failed"; error?: string },
+) {
+  const now = nowIso();
+  const guestRef = doc(db, "events", eventId, "guests", guestId);
+  await updateDoc(guestRef, {
+    inviteStatus: payload.status,
+    inviteError: payload.error ?? "",
+    inviteLastAttemptAt: now,
+    inviteSentAt: payload.status === "sent" ? now : "",
+    updatedAt: now,
+  });
+}
+
+export async function deleteGuestFromEvent(eventId: string, guestId: string) {
+  const eventRef = doc(db, "events", eventId);
+  const guestRef = doc(db, "events", eventId, "guests", guestId);
+
+  await runTransaction(db, async (tx) => {
+    const eventSnap = await tx.get(eventRef);
+    if (!eventSnap.exists()) {
+      throw new Error("No se encontró el evento.");
+    }
+    const current = Number(eventSnap.data().currentGuestCount ?? 0);
+    tx.update(eventRef, {
+      currentGuestCount: current > 0 ? current - 1 : 0,
+      updatedAt: nowIso(),
+    });
+    tx.delete(guestRef);
   });
 }

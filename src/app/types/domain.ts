@@ -27,6 +27,7 @@ export interface EventItem {
   date: string;
   time: string;
   guestCount?: number;
+  currentGuestCount?: number;
   location: string;
   description: string;
   memberIds: string[];
@@ -46,6 +47,10 @@ export interface GuestItem {
   isExtra: boolean;
   qrDataUrl: string;
   braceletNumber?: number;
+  inviteStatus?: "pending" | "sent" | "failed";
+  inviteSentAt?: string;
+  inviteLastAttemptAt?: string;
+  inviteError?: string;
   createdAt: string;
   updatedAt: string;
 }

@@ -20,6 +20,10 @@ export interface GuestToInvite {
 interface SendInvitationsModalProps {
   guests: GuestToInvite[];
   onClose: () => void;
+  onGuestResult?: (
+    guestId: number,
+    result: { status: "sent" | "failed"; error?: string },
+  ) => Promise<void> | void;
 }
 
 type Step = "compose" | "sending" | "done";
@@ -28,6 +32,7 @@ interface GuestStatus {
   guest: GuestToInvite;
   qrUrl: string;
   status: "pending" | "generating" | "sending" | "done" | "error";
+  errorText?: string;
 }
 
 // ── Simulates sending one invite (QR generation + email) ─────────────────────
@@ -50,8 +55,7 @@ async function processGuest(
   await delay(150 + Math.random() * 250);
 
   if (!guest.email) {
-    onUpdate("error", qrUrl);
-    return;
+    throw new Error("El invitado no tiene correo.");
   }
 
   const html = buildInviteHtml({
@@ -126,7 +130,7 @@ function statusLabel(status: GuestStatus["status"]) {
 }
 
 // ── Main modal ────────────────────────────────────────────────────────────────
-export function SendInvitationsModal({ guests, onClose }: SendInvitationsModalProps) {
+export function SendInvitationsModal({ guests, onClose, onGuestResult }: SendInvitationsModalProps) {
   const defaultMsg =
     `Hola [Nombre],\n\nTe invitamos al evento. Adjunto encontrarás tu código QR de acceso.\n\nPor favor, presentalo al ingresar al evento.\n\n¡Te esperamos!`;
 
@@ -136,18 +140,20 @@ export function SendInvitationsModal({ guests, onClose }: SendInvitationsModalPr
     guests.map((g) => ({ guest: g, qrUrl: "", status: "pending" }))
   );
   const [doneCount, setDoneCount] = useState(0);
+  const [globalError, setGlobalError] = useState<string | null>(null);
 
   const handleSend = async () => {
     setStep("sending");
+    setGlobalError(null);
     let done = 0;
 
     for (let i = 0; i < guests.length; i++) {
       const guest = guests[i];
 
-      const updateStatus = (status: GuestStatus["status"], qrUrl?: string) => {
+      const updateStatus = (status: GuestStatus["status"], qrUrl?: string, errorText?: string) => {
         setStatuses((prev) =>
           prev.map((s, idx) =>
-            idx === i ? { ...s, status, qrUrl: qrUrl ?? s.qrUrl } : s
+            idx === i ? { ...s, status, qrUrl: qrUrl ?? s.qrUrl, errorText: errorText ?? s.errorText } : s
           )
         );
         if (status === "done") {
@@ -158,8 +164,14 @@ export function SendInvitationsModal({ guests, onClose }: SendInvitationsModalPr
 
       try {
         await processGuest(guest, message, updateStatus);
-      } catch (_) {
-        updateStatus("error");
+        await onGuestResult?.(guest.id, { status: "sent" });
+      } catch (e: any) {
+        const reason = e?.message ?? "Error desconocido al enviar.";
+        updateStatus("error", undefined, reason);
+        await onGuestResult?.(guest.id, { status: "failed", error: reason });
+        if (!globalError) {
+          setGlobalError(reason);
+        }
       }
     }
 
@@ -326,6 +338,14 @@ export function SendInvitationsModal({ guests, onClose }: SendInvitationsModalPr
         {/* ── STEP: SENDING ── */}
         {step === "sending" && (
           <div className="flex flex-col gap-4">
+            {globalError && (
+              <div
+                className="rounded-2xl px-4 py-3"
+                style={{ background: "rgba(229,62,62,0.12)", color: "#e53e3e", fontSize: "12px", fontWeight: 600 }}
+              >
+                Error de envío: {globalError}
+              </div>
+            )}
             {/* Progress */}
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
@@ -386,6 +406,11 @@ export function SendInvitationsModal({ guests, onClose }: SendInvitationsModalPr
                       <p style={{ fontSize: "10px", color: lbl.color, margin: 0, fontWeight: 500 }}>
                         {lbl.text}
                       </p>
+                      {s.errorText && (
+                        <p style={{ fontSize: "10px", color: "#e53e3e", margin: 0 }}>
+                          {s.errorText}
+                        </p>
+                      )}
                     </div>
 
                     <StatusIcon status={s.status} />
@@ -408,7 +433,7 @@ export function SendInvitationsModal({ guests, onClose }: SendInvitationsModalPr
               </div>
               <div className="text-center">
                 <p style={{ fontSize: "20px", fontWeight: 700, color: "#00897b", margin: 0 }}>
-                  Invitaciones enviadas
+                  Proceso finalizado
                 </p>
                 <p style={{ fontSize: "13px", color: "#8a9bb0", margin: 0, marginTop: 6, lineHeight: 1.5 }}>
                   Se enviaron{" "}
@@ -435,9 +460,15 @@ export function SendInvitationsModal({ guests, onClose }: SendInvitationsModalPr
                   <span style={{ fontSize: "13px", color: "#3d4a5c", fontWeight: 600, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {s.guest.name}
                   </span>
-                  <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "rgba(0,137,123,0.15)" }}>
-                    <Check size={11} color="#00897b" strokeWidth={2.5} />
-                  </div>
+                  {s.status === "done" ? (
+                    <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "rgba(0,137,123,0.15)" }}>
+                      <Check size={11} color="#00897b" strokeWidth={2.5} />
+                    </div>
+                  ) : (
+                    <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "rgba(229,62,62,0.15)" }}>
+                      <X size={11} color="#e53e3e" strokeWidth={2.5} />
+                    </div>
+                  )}
                 </div>
               ))}
               {statuses.length > 5 && (

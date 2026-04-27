@@ -27,16 +27,20 @@ import {
   MapPin,
   Lock,
   Send,
+  Trash2,
 } from "lucide-react";
 import { BulkUploadModal, type ParsedGuest } from "./BulkUploadModal";
 import { SendInvitationsModal, type GuestToInvite } from "./SendInvitationsModal";
 import {
   addGuestToEvent,
+  deleteGuestFromEvent,
   getEventById,
   markGuestPresent,
+  setGuestInvitationStatus,
   subscribeToGuests,
 } from "../lib/events";
 import type { EventItem, GuestItem } from "../types/domain";
+import { buildInviteHtml, sendInvitationEmail } from "../lib/email";
 
 const TODAY = new Date().toISOString().split("T")[0];
 
@@ -64,6 +68,10 @@ interface Guest {
   extra: boolean;
   bracelet?: number;
   qrDataUrl?: string;
+  inviteStatus?: "pending" | "sent" | "failed";
+  inviteSentAt?: string;
+  inviteLastAttemptAt?: string;
+  inviteError?: string;
 }
 
 // ── Status config ─────────────────────────────────────────────────────────────
@@ -77,6 +85,16 @@ const STATUS_LABELS: Record<string, { label: string; color: string; bg: string }
 function formatDate(dateStr: string) {
   const d = new Date(dateStr + "T00:00:00");
   return d.toLocaleDateString("es-ES", { day: "2-digit", month: "long", year: "numeric" });
+}
+
+function inviteStatusVisual(status?: "pending" | "sent" | "failed") {
+  if (status === "sent") {
+    return { label: "Invitación enviada", color: "#00897b", bg: "rgba(0,137,123,0.12)" };
+  }
+  if (status === "failed") {
+    return { label: "Falló el envío", color: "#e53e3e", bg: "rgba(229,62,62,0.12)" };
+  }
+  return { label: "Sin envío", color: "#8a9bb0", bg: "rgba(160,174,192,0.12)" };
 }
 
 // ── Bottom Nav ────────────────────────────────────────────────────────────────
@@ -254,15 +272,24 @@ function GuestDetailSheet({
   guest,
   onClose,
   onConfirmPresence,
+  onResendInvitation,
+  onDeleteGuest,
 }: {
   guest: Guest;
   onClose: () => void;
   onConfirmPresence: (bracelet: number) => void;
+  onResendInvitation: () => Promise<void>;
+  onDeleteGuest: () => Promise<void>;
 }) {
   const [bracelet, setBracelet] = useState("");
   const [showConfirm, setShowConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [sendingInvite, setSendingInvite] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [inviteFeedback, setInviteFeedback] = useState<string | null>(null);
 
   const canMark = bracelet.trim() !== "" && Number(bracelet) > 0;
+  const inviteBadge = inviteStatusVisual(guest.inviteStatus);
 
   const handleMarkPresent = () => {
     if (!canMark) return;
@@ -273,6 +300,30 @@ function GuestDetailSheet({
     onConfirmPresence(Number(bracelet));
     setShowConfirm(false);
     onClose();
+  };
+
+  const handleResend = async () => {
+    setInviteFeedback(null);
+    try {
+      setSendingInvite(true);
+      await onResendInvitation();
+      setInviteFeedback("Invitación enviada correctamente.");
+    } catch (e: any) {
+      setInviteFeedback(e?.message ?? "No se pudo reenviar la invitación.");
+    } finally {
+      setSendingInvite(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    try {
+      setDeleting(true);
+      await onDeleteGuest();
+      setShowDeleteConfirm(false);
+      onClose();
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (
@@ -408,6 +459,64 @@ function GuestDetailSheet({
             </>
           )}
 
+          {/* Invitation status */}
+          <div
+            className="rounded-2xl p-4 flex flex-col gap-2"
+            style={{ background: "#e8ecf0", boxShadow: "inset 4px 4px 8px #b8bec7, inset -4px -4px 8px #ffffff" }}
+          >
+            <div className="flex items-center justify-between">
+              <span style={{ fontSize: "12px", color: "#8a9bb0", fontWeight: 600 }}>
+                Estado de invitación
+              </span>
+              <span className="px-2 py-1 rounded-full" style={{ fontSize: "11px", fontWeight: 700, color: inviteBadge.color, background: inviteBadge.bg }}>
+                {inviteBadge.label}
+              </span>
+            </div>
+            {guest.inviteSentAt && (
+              <span style={{ fontSize: "11px", color: "#6b7a8d" }}>
+                Último envío: {new Date(guest.inviteSentAt).toLocaleString("es-CL")}
+              </span>
+            )}
+            {guest.inviteError && (
+              <span style={{ fontSize: "11px", color: "#e53e3e" }}>{guest.inviteError}</span>
+            )}
+            {inviteFeedback && (
+              <span style={{ fontSize: "11px", color: inviteFeedback.includes("correctamente") ? "#00897b" : "#e53e3e" }}>
+                {inviteFeedback}
+              </span>
+            )}
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={handleResend}
+                disabled={sendingInvite || !guest.email}
+                className="flex-1 py-2.5 rounded-xl"
+                style={{
+                  border: "none",
+                  background: guest.email ? "linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)" : "#d8dfe8",
+                  color: "#fff",
+                  fontSize: "12px",
+                  fontWeight: 700,
+                  cursor: guest.email ? "pointer" : "not-allowed",
+                }}
+              >
+                {sendingInvite ? "Enviando..." : "Reenviar invitación"}
+              </button>
+              <button
+                onClick={() => setShowDeleteConfirm(true)}
+                className="w-11 h-10 rounded-xl flex items-center justify-center"
+                style={{ border: "none", background: "rgba(229,62,62,0.12)", cursor: "pointer" }}
+                title="Eliminar invitado"
+              >
+                <Trash2 size={16} color="#e53e3e" />
+              </button>
+            </div>
+            {!guest.email && (
+              <span style={{ fontSize: "10px", color: "#a0aec0" }}>
+                Este invitado no tiene correo cargado.
+              </span>
+            )}
+          </div>
+
           {/* Close */}
           <button
             onClick={onClose}
@@ -483,6 +592,42 @@ function GuestDetailSheet({
                 }}
               >
                 Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDeleteConfirm && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center px-8"
+          style={{ background: "rgba(60,80,100,0.3)", backdropFilter: "blur(4px)" }}
+        >
+          <div
+            className="w-full max-w-[320px] rounded-3xl p-6 flex flex-col gap-5"
+            style={{ background: "#e8ecf0", boxShadow: "10px 10px 24px #b8bec7, -10px -10px 24px #ffffff" }}
+          >
+            <h3 style={{ fontSize: "17px", fontWeight: 700, color: "#3d4a5c", margin: 0, textAlign: "center" }}>
+              Eliminar invitado
+            </h3>
+            <p style={{ fontSize: "13px", color: "#8a9bb0", margin: 0, textAlign: "center" }}>
+              ¿Seguro que quieres eliminar a <strong style={{ color: "#3d4a5c" }}>{guest.name}</strong>?
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="flex-1 py-3.5 rounded-2xl"
+                style={{ background: "#e8ecf0", boxShadow: "4px 4px 8px #b8bec7, -4px -4px 8px #ffffff", border: "none", fontWeight: 600, color: "#8a9bb0" }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex-1 py-3.5 rounded-2xl"
+                style={{ background: "#e53e3e", boxShadow: "5px 5px 12px rgba(229,62,62,0.35)", border: "none", fontWeight: 700, color: "#fff" }}
+              >
+                {deleting ? "Eliminando..." : "Eliminar"}
               </button>
             </div>
           </div>
@@ -762,6 +907,8 @@ function AddGuestModal({
 function InvitadosTab({
   guests,
   onUpdateGuest,
+  onResendInvitation,
+  onDeleteGuest,
   onAddGuest,
   canAdd,
   hasBulkLoaded,
@@ -769,6 +916,8 @@ function InvitadosTab({
 }: {
   guests: Guest[];
   onUpdateGuest: (id: number, bracelet: number) => void;
+  onResendInvitation: (guestId: number) => Promise<void>;
+  onDeleteGuest: (guestId: number) => Promise<void>;
   onAddGuest: () => void;
   canAdd: boolean;
   hasBulkLoaded: boolean;
@@ -886,6 +1035,8 @@ function InvitadosTab({
           guest={selected}
           onClose={() => setSelected(null)}
           onConfirmPresence={handleConfirmPresence}
+          onResendInvitation={() => onResendInvitation(selected.id)}
+          onDeleteGuest={() => onDeleteGuest(selected.id)}
         />
       )}
     </>
@@ -1140,6 +1291,10 @@ export function EventDetailScreen() {
         extra: g.isExtra,
         bracelet: g.braceletNumber,
         qrDataUrl: g.qrDataUrl,
+        inviteStatus: g.inviteStatus ?? "pending",
+        inviteSentAt: g.inviteSentAt ?? "",
+        inviteLastAttemptAt: g.inviteLastAttemptAt ?? "",
+        inviteError: g.inviteError ?? "",
       }));
       setGuests(mapped);
       setEvent((prev) => (prev ? { ...prev, guests: mapped.length } : prev));
@@ -1171,6 +1326,56 @@ export function EventDetailScreen() {
       const nextId = Math.max(...guests.map((g) => g.id), 0) + 1;
       setGuestToInvite({ id: nextId, name, email: trimmedEmail });
     }
+  };
+
+  const sendInvitationForGuest = async (guest: Guest) => {
+    if (!id || !guest.docId) return;
+    if (!guest.email) {
+      throw new Error("Este invitado no tiene correo cargado.");
+    }
+
+    await setGuestInvitationStatus(id, guest.docId, { status: "pending" });
+
+    try {
+      const baseMessage =
+        "Te invitamos al evento. Adjunto encontrarás tu código QR de acceso. Presenta este código en el ingreso.";
+      const qrDataUrl =
+        guest.qrDataUrl ||
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADElEQVR42mP8z/C/HwAF/gK9Kq7m0QAAAABJRU5ErkJggg==";
+
+      const html = buildInviteHtml({
+        guestName: guest.name,
+        message: baseMessage,
+        qrDataUrl,
+      });
+
+      await sendInvitationEmail({
+        to: guest.email,
+        subject: `Tu invitación al evento ${event?.name ?? ""}`.trim(),
+        html,
+      });
+
+      await setGuestInvitationStatus(id, guest.docId, { status: "sent" });
+    } catch (e: any) {
+      await setGuestInvitationStatus(id, guest.docId, {
+        status: "failed",
+        error: e?.message ?? "No se pudo enviar invitación.",
+      });
+      throw e;
+    }
+  };
+
+  const handleResendInvitation = async (guestId: number) => {
+    const guest = guests.find((g) => g.id === guestId);
+    if (!guest) throw new Error("Invitado no encontrado.");
+    await sendInvitationForGuest(guest);
+  };
+
+  const handleDeleteGuest = async (guestId: number) => {
+    if (!id) return;
+    const guest = guests.find((g) => g.id === guestId);
+    if (!guest?.docId) return;
+    await deleteGuestFromEvent(id, guest.docId);
   };
 
   const handleBulkSuccess = async (parsed: ParsedGuest[]) => {
@@ -1232,6 +1437,8 @@ export function EventDetailScreen() {
           <InvitadosTab
             guests={guests}
             onUpdateGuest={handleUpdateGuest}
+            onResendInvitation={handleResendInvitation}
+            onDeleteGuest={handleDeleteGuest}
             onAddGuest={() => setShowAddGuest(true)}
             canAdd={canAdd}
             hasBulkLoaded={hasBulkLoaded}
@@ -1295,6 +1502,15 @@ export function EventDetailScreen() {
       {(showSendInvitations || guestToInvite !== null) && (
         <SendInvitationsModal
           guests={inviteGuests}
+          onGuestResult={async (guestNumber, result) => {
+            if (!id) return;
+            const target = guests.find((g) => g.id === guestNumber);
+            if (!target?.docId) return;
+            await setGuestInvitationStatus(id, target.docId, {
+              status: result.status,
+              error: result.error,
+            });
+          }}
           onClose={handleSendClose}
         />
       )}

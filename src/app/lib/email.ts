@@ -54,7 +54,11 @@ export async function sendInvitationEmail(params: {
 
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(body?.details || body?.error || "No se pudo enviar la invitación.");
+    const detail =
+      typeof body?.details === "string"
+        ? body.details
+        : body?.details?.message || body?.details?.error || body?.error;
+    throw new Error(detail || "No se pudo enviar la invitación.");
   }
 
   return body;

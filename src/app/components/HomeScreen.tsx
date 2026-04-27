@@ -223,7 +223,7 @@ function mapEvent(item: EventItem): AppEvent {
     date: item.date,
     time: item.time,
     status: item.status,
-    guests: Number(item.guestCount ?? 0),
+    guests: Number(item.currentGuestCount ?? item.guestCount ?? 0),
     location: item.location || "",
     description: item.description || "",
   };
