@@ -1,11 +1,28 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import { Calendar, Clock, Users, Plus, User, ChevronRight } from "lucide-react";
-import { createEventForUser, subscribeToMyEvents } from "../lib/events";
+import {
+  Calendar,
+  Clock,
+  Users,
+  Plus,
+  User,
+  ChevronRight,
+  Search,
+  Archive,
+  ArrowLeft,
+} from "lucide-react";
+import {
+  createEventForUser,
+  setEventArchived,
+  setEventStatus,
+  subscribeToMyEvents,
+} from "../lib/events";
 import { useAuth } from "../providers/AuthProvider";
 import type { EventItem } from "../types/domain";
 
 type EventStatus = "realizado" | "pendiente" | "cancelado";
+
+type DisplayStatus = EventStatus | "en_curso";
 
 export interface AppEvent {
   id: string;
@@ -14,12 +31,10 @@ export interface AppEvent {
   time: string;
   status: EventStatus;
   guests: number;
+  archived?: boolean;
   location?: string;
   description?: string;
 }
-
-const TODAY = new Date().toISOString().split("T")[0];
-type DisplayStatus = EventStatus | "en_curso";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; dot: string }> = {
   en_curso: { label: "En curso", color: "#7c3aed", bg: "rgba(124,58,237,0.12)", dot: "#7c3aed" },
@@ -28,19 +43,57 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; 
   cancelado: { label: "Cancelado", color: "#e53e3e", bg: "rgba(229,62,62,0.10)", dot: "#e53e3e" },
 };
 
+function getLocalDateKey(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function parseTimeToMinutes(time: string) {
+  const [h, m] = time.split(":").map((v) => Number(v));
+  if (Number.isNaN(h) || Number.isNaN(m)) return 0;
+  return h * 60 + m;
+}
+
+function nowMinutes() {
+  const now = new Date();
+  return now.getHours() * 60 + now.getMinutes();
+}
+
+function getDisplayStatus(event: AppEvent): DisplayStatus {
+  const today = getLocalDateKey();
+
+  if (event.status === "cancelado") return "cancelado";
+  if (event.date < today) return "realizado";
+
+  if (event.date === today) {
+    const startMinutes = parseTimeToMinutes(event.time);
+    if (nowMinutes() >= startMinutes && event.status !== "realizado") {
+      return "en_curso";
+    }
+  }
+
+  return event.status;
+}
+
 function formatDate(dateStr: string) {
   const d = new Date(`${dateStr}T00:00:00`);
   return d.toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-function getDisplayStatus(event: AppEvent): DisplayStatus {
-  if (event.date === TODAY && event.status !== "cancelado") return "en_curso";
-  return event.status;
-}
-
-function EventCard({ event, onClick }: { event: AppEvent; onClick: () => void }) {
+function EventCard({
+  event,
+  onClick,
+  onArchive,
+}: {
+  event: AppEvent;
+  onClick: () => void;
+  onArchive: () => void;
+}) {
   const displayStatus: DisplayStatus = getDisplayStatus(event);
   const isActive = displayStatus === "en_curso";
+  const canArchive = displayStatus === "realizado";
   const statusCfg = STATUS_CONFIG[displayStatus] ?? STATUS_CONFIG.pendiente;
 
   return (
@@ -102,6 +155,30 @@ function EventCard({ event, onClick }: { event: AppEvent; onClick: () => void })
         </div>
 
         <div className="flex items-center gap-2 flex-shrink-0">
+          {canArchive && (
+            <button
+              type="button"
+              title="Archivar evento"
+              onClick={(e) => {
+                e.stopPropagation();
+                onArchive();
+              }}
+              style={{
+                border: "none",
+                background: "rgba(0,137,123,0.12)",
+                color: "#00897b",
+                borderRadius: 10,
+                width: 28,
+                height: 28,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+              }}
+            >
+              <Archive size={14} />
+            </button>
+          )}
           {isActive && (
             <div className="px-2.5 py-1 rounded-xl" style={{ background: "linear-gradient(135deg, #7c3aed, #a78bfa)", fontSize: "11px", fontWeight: 700, color: "#fff", letterSpacing: "0.5px" }}>
               HOY
@@ -243,10 +320,15 @@ function mapEvent(item: EventItem): AppEvent {
     date: item.date,
     time: item.time,
     status: item.status,
+    archived: Boolean(item.archived),
     guests: Number(item.currentGuestCount ?? item.guestCount ?? 0),
     location: item.location || "",
     description: item.description || "",
   };
+}
+
+function isPastEvent(event: AppEvent) {
+  return event.date < getLocalDateKey();
 }
 
 export function HomeScreen() {
@@ -256,6 +338,8 @@ export function HomeScreen() {
   const [showModal, setShowModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [eventsLoading, setEventsLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -265,10 +349,24 @@ export function HomeScreen() {
     setEventsLoading(true);
     const unsub = subscribeToMyEvents(
       user.uid,
-      (items) => {
+      async (items) => {
         const mapped = items.map(mapEvent);
-        mapped.sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time));
-        setEvents(mapped);
+
+        const nowProcessed = await Promise.all(
+          mapped.map(async (event) => {
+            if (isPastEvent(event) && event.status !== "realizado" && event.status !== "cancelado") {
+              try {
+                await setEventStatus(event.id, "realizado");
+                return { ...event, status: "realizado" as EventStatus };
+              } catch {
+                return event;
+              }
+            }
+            return event;
+          }),
+        );
+
+        setEvents(nowProcessed);
         setError(null);
         setEventsLoading(false);
       },
@@ -282,9 +380,31 @@ export function HomeScreen() {
 
   const welcomeName = useMemo(() => user?.displayName || "Bienvenido de nuevo", [user]);
 
+  const activeEvents = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    const filtered = events.filter((e) => !e.archived).filter((e) => (query ? e.name.toLowerCase().includes(query) : true));
+
+    return filtered.sort((a, b) => {
+      const aStatus = getDisplayStatus(a);
+      const bStatus = getDisplayStatus(b);
+      if (aStatus === "en_curso" && bStatus !== "en_curso") return -1;
+      if (bStatus === "en_curso" && aStatus !== "en_curso") return 1;
+      return a.date.localeCompare(b.date) || a.time.localeCompare(b.time);
+    });
+  }, [events, search]);
+
+  const archivedEvents = useMemo(
+    () => events.filter((e) => e.archived).sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time)),
+    [events],
+  );
+
   async function handleCreateEvent(payload: { name: string; date: string; time: string; location: string; description: string }) {
     if (!user?.email) throw new Error("Sesión inválida");
     await createEventForUser(user.uid, user.email, user.displayName ?? user.email.split("@")[0], payload);
+  }
+
+  async function handleArchiveEvent(eventId: string) {
+    await setEventArchived(eventId, true);
   }
 
   return (
@@ -294,7 +414,9 @@ export function HomeScreen() {
           <div className="flex items-center justify-between">
             <div>
               <p style={{ fontSize: "13px", color: "#8a9bb0", fontWeight: 500, margin: 0 }}>{welcomeName}</p>
-              <h1 style={{ fontSize: "22px", fontWeight: 700, color: "#3d4a5c", margin: 0 }}>Mis Eventos</h1>
+              <h1 style={{ fontSize: "22px", fontWeight: 700, color: "#3d4a5c", margin: 0 }}>
+                {showArchived ? "Eventos archivados" : "Mis Eventos"}
+              </h1>
             </div>
             <button
               onClick={async () => {
@@ -308,49 +430,108 @@ export function HomeScreen() {
               <User size={18} color="#26c6da" strokeWidth={2} />
             </button>
           </div>
+          <p style={{ margin: "4px 0 0", fontSize: 11, color: "#8a9bb0", fontWeight: 600 }}>Versión 0.5 Beta</p>
         </div>
 
         <div className="flex-1 px-6 pb-32 flex flex-col gap-4 mt-2">
           {error && <p style={{ fontSize: "13px", color: "#e53e3e", margin: 0 }}>{error}</p>}
-          {eventsLoading ? (
+
+          {showArchived ? (
             <>
-              <p style={{ fontSize: "13px", color: "#8a9bb0", fontWeight: 600, margin: 0 }}>Cargando eventos...</p>
-              <EventCardSkeleton />
-              <EventCardSkeleton />
-              <EventCardSkeleton />
+              <button
+                onClick={() => setShowArchived(false)}
+                className="self-start flex items-center gap-2 px-3 py-2 rounded-xl"
+                style={{ border: "none", background: "#e8ecf0", boxShadow: "4px 4px 8px #b8bec7, -4px -4px 8px #ffffff", color: "#6b7a8d", cursor: "pointer", fontSize: 12, fontWeight: 700 }}
+              >
+                <ArrowLeft size={14} /> Volver a eventos
+              </button>
+
+              {archivedEvents.length === 0 ? (
+                <p style={{ fontSize: "13px", color: "#a0aec0", margin: 0 }}>No hay eventos archivados.</p>
+              ) : (
+                archivedEvents.map((event) => (
+                  <div
+                    key={event.id}
+                    className="rounded-2xl px-4 py-3 flex items-center justify-between"
+                    style={{ background: "#e8ecf0", boxShadow: "5px 5px 10px #b8bec7, -5px -5px 10px #ffffff" }}
+                  >
+                    <span style={{ fontSize: 14, color: "#3d4a5c", fontWeight: 600 }}>{event.name}</span>
+                    <span style={{ fontSize: 12, color: "#8a9bb0", fontWeight: 600 }}>{formatDate(event.date)}</span>
+                  </div>
+                ))
+              )}
             </>
           ) : (
             <>
-              <p style={{ fontSize: "13px", color: "#8a9bb0", fontWeight: 500, margin: 0 }}>{events.length} eventos agendados</p>
-              {events.length === 0 ? (
-                <p style={{ fontSize: "13px", color: "#a0aec0", margin: 0 }}>Aún no tienes eventos creados.</p>
+              <div
+                className="flex items-center gap-2 px-3 py-2.5 rounded-2xl"
+                style={{ background: "#e8ecf0", boxShadow: "inset 3px 3px 6px #b8bec7, inset -3px -3px 6px #ffffff" }}
+              >
+                <Search size={14} color="#8a9bb0" />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Buscar eventos..."
+                  style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 13, color: "#3d4a5c" }}
+                />
+              </div>
+
+              {eventsLoading ? (
+                <>
+                  <p style={{ fontSize: "13px", color: "#8a9bb0", fontWeight: 600, margin: 0 }}>Cargando eventos...</p>
+                  <EventCardSkeleton />
+                  <EventCardSkeleton />
+                  <EventCardSkeleton />
+                </>
               ) : (
-                events.map((event) => (
-                  <EventCard key={event.id} event={event} onClick={() => navigate(`/event/${event.id}`)} />
-                ))
+                <>
+                  <p style={{ fontSize: "13px", color: "#8a9bb0", fontWeight: 500, margin: 0 }}>{activeEvents.length} eventos visibles</p>
+                  {activeEvents.length === 0 ? (
+                    <p style={{ fontSize: "13px", color: "#a0aec0", margin: 0 }}>No hay eventos para mostrar.</p>
+                  ) : (
+                    activeEvents.map((event) => (
+                      <EventCard
+                        key={event.id}
+                        event={event}
+                        onClick={() => navigate(`/event/${event.id}`)}
+                        onArchive={() => handleArchiveEvent(event.id)}
+                      />
+                    ))
+                  )}
+
+                  <button
+                    onClick={() => setShowArchived(true)}
+                    className="mt-1 self-center"
+                    style={{ border: "none", background: "transparent", color: "#00acc1", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+                  >
+                    Ver eventos archivados ({archivedEvents.length})
+                  </button>
+                </>
               )}
             </>
           )}
         </div>
 
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 w-full max-w-[390px] px-6 pointer-events-none">
-          <button
-            onClick={() => setShowModal(true)}
-            className="w-full py-4 rounded-2xl flex items-center justify-center gap-2 pointer-events-auto transition-all duration-150 active:scale-[0.97]"
-            style={{
-              background: "linear-gradient(135deg, #26c6da 0%, #00acc1 100%)",
-              boxShadow: "6px 6px 16px rgba(0,172,193,0.45), -2px -2px 8px rgba(255,255,255,0.6)",
-              border: "none",
-              cursor: "pointer",
-              color: "#ffffff",
-              fontSize: "16px",
-              fontWeight: 600,
-            }}
-          >
-            <Plus size={20} color="#fff" strokeWidth={2.5} />
-            Agregar evento
-          </button>
-        </div>
+        {!showArchived && (
+          <div className="fixed bottom-8 left-1/2 -translate-x-1/2 w-full max-w-[390px] px-6 pointer-events-none">
+            <button
+              onClick={() => setShowModal(true)}
+              className="w-full py-4 rounded-2xl flex items-center justify-center gap-2 pointer-events-auto transition-all duration-150 active:scale-[0.97]"
+              style={{
+                background: "linear-gradient(135deg, #26c6da 0%, #00acc1 100%)",
+                boxShadow: "6px 6px 16px rgba(0,172,193,0.45), -2px -2px 8px rgba(255,255,255,0.6)",
+                border: "none",
+                cursor: "pointer",
+                color: "#ffffff",
+                fontSize: "16px",
+                fontWeight: 600,
+              }}
+            >
+              <Plus size={20} color="#fff" strokeWidth={2.5} />
+              Agregar evento
+            </button>
+          </div>
+        )}
       </div>
 
       {showModal && <NewEventModal onClose={() => setShowModal(false)} onCreate={handleCreateEvent} />}

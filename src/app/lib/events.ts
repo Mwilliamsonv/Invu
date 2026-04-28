@@ -36,6 +36,8 @@ function toEventItem(id: string, data: any): EventItem {
     id,
     name: data.name ?? "",
     status: (data.status ?? "pendiente") as EventStatus,
+    archived: Boolean(data.archived),
+    archivedAt: data.archivedAt ?? "",
     date: data.date ?? "",
     time: data.time ?? "",
     guestCount: Number(data.guestCount ?? 0),
@@ -130,6 +132,8 @@ export async function createEventForUser(
   const eventData: Omit<EventItem, "id"> = {
     name: input.name.trim(),
     status: input.status ?? "pendiente",
+    archived: false,
+    archivedAt: "",
     date: input.date,
     time: input.time,
     guestCount: 0,
@@ -208,6 +212,21 @@ export async function shareEventWithEmail(
     userData.displayName ?? emailKey,
     role,
   );
+}
+
+export async function setEventArchived(eventId: string, archived: boolean) {
+  await updateDoc(doc(db, "events", eventId), {
+    archived,
+    archivedAt: archived ? nowIso() : "",
+    updatedAt: nowIso(),
+  });
+}
+
+export async function setEventStatus(eventId: string, status: EventStatus) {
+  await updateDoc(doc(db, "events", eventId), {
+    status,
+    updatedAt: nowIso(),
+  });
 }
 
 export async function getEventById(eventId: string): Promise<EventItem | null> {

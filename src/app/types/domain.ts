@@ -24,6 +24,8 @@ export interface EventItem {
   id: string;
   name: string;
   status: EventStatus;
+  archived?: boolean;
+  archivedAt?: string;
   date: string;
   time: string;
   guestCount?: number;
