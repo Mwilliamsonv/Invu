@@ -1099,6 +1099,7 @@ function EventoTab({
   canAdd,
   isPendiente,
   onBulkUpload,
+  onDownloadExcel,
 }: {
   event: AppEvent;
   guests: Guest[];
@@ -1106,6 +1107,7 @@ function EventoTab({
   canAdd: boolean;
   isPendiente: boolean;
   onBulkUpload: () => void;
+  onDownloadExcel: () => void;
 }) {
   const isRealizado = event.status === "realizado";
   const isCancelado = event.status === "cancelado";
@@ -1249,7 +1251,7 @@ function EventoTab({
             </span>
           </div>
         )}
-        <ActionButton label={"Descargar\nExcel"} Icon={Download} accent />
+        <ActionButton label={"Descargar\nExcel"} Icon={Download} accent onClick={onDownloadExcel} />
       </div>
 
       {!canAdd && (
@@ -1447,6 +1449,94 @@ export function EventDetailScreen() {
     await deleteGuestFromEvent(id, guest.docId);
   };
 
+  const handleDownloadExcel = () => {
+    if (!event) return;
+    void (async () => {
+      try {
+        const ExcelJSImport = await import("exceljs");
+        const workbook = new ExcelJSImport.Workbook();
+        const worksheet = workbook.addWorksheet("Invitados");
+
+        worksheet.columns = [
+          { header: "ID", key: "id", width: 10 },
+          { header: "Nombre", key: "name", width: 28 },
+          { header: "Telefono", key: "phone", width: 16 },
+          { header: "Correo", key: "email", width: 30 },
+          { header: "Presente", key: "present", width: 10 },
+          { header: "Ausente", key: "absent", width: 10 },
+          { header: "Extra", key: "extra", width: 8 },
+          { header: "Pulsera", key: "bracelet", width: 12 },
+          { header: "EstadoInvitacion", key: "inviteStatus", width: 18 },
+          { header: "ErrorInvitacion", key: "inviteError", width: 26 },
+          { header: "QR", key: "qr", width: 18 },
+        ];
+
+        worksheet.getRow(1).font = { bold: true };
+        worksheet.getRow(1).alignment = { vertical: "middle", horizontal: "center" };
+        worksheet.getRow(1).height = 24;
+
+        for (const guest of guests) {
+          const row = worksheet.addRow({
+            id: String(guest.id).padStart(4, "0"),
+            name: guest.name,
+            phone: guest.phone ?? "",
+            email: guest.email ?? "",
+            present: guest.present ? "X" : "",
+            absent: guest.present ? "" : "X",
+            extra: guest.extra ? "X" : "",
+            bracelet: guest.bracelet ?? "",
+            inviteStatus:
+              guest.inviteStatus === "sent"
+                ? "Enviada"
+                : guest.inviteStatus === "failed"
+                  ? "Fallida"
+                  : "Pendiente",
+            inviteError: guest.inviteError ?? "",
+            qr: "",
+          });
+
+          row.alignment = { vertical: "middle" };
+
+          if (guest.qrDataUrl?.startsWith("data:image/")) {
+            row.height = 80;
+            const qrImageId = workbook.addImage({
+              base64: guest.qrDataUrl,
+              extension: "png",
+            });
+            const rowIndex = row.number;
+            worksheet.addImage(qrImageId, {
+              tl: { col: 10 + 0.1, row: (rowIndex - 1) + 0.08 },
+              ext: { width: 72, height: 72 },
+              editAs: "oneCell",
+            });
+          }
+        }
+
+        const safeName = event.name.replace(/[\\/:*?"<>|]/g, "_").trim() || "evento";
+        const filename = `invitados_${safeName}_${event.date}.xlsx`;
+        const buffer = await workbook.xlsx.writeBuffer();
+        const blob = new Blob([buffer], {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        });
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+
+        setGuestFeedback("Excel descargado correctamente.");
+        setTimeout(() => setGuestFeedback(null), 2500);
+      } catch {
+        setGuestFeedback("No se pudo generar el Excel.");
+        setTimeout(() => setGuestFeedback(null), 3000);
+      }
+    })();
+  };
+
   const handleBulkSuccess = async (parsed: ParsedGuest[]) => {
     if (!id) return;
     let created = 0;
@@ -1526,6 +1616,7 @@ export function EventDetailScreen() {
             canAdd={canAdd}
             isPendiente={isPendiente}
             onBulkUpload={() => setShowBulkModal(true)}
+            onDownloadExcel={handleDownloadExcel}
           />
         );
       case "invitados":

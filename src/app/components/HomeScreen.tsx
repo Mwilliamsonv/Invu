@@ -129,6 +129,26 @@ function EventCard({ event, onClick }: { event: AppEvent; onClick: () => void })
   );
 }
 
+function EventCardSkeleton() {
+  return (
+    <div
+      className="w-full rounded-3xl p-5 flex flex-col gap-3"
+      style={{
+        background: "#e8ecf0",
+        boxShadow: "6px 6px 14px #b8bec7, -6px -6px 14px #ffffff",
+      }}
+    >
+      <div className="h-4 rounded-xl" style={{ width: "68%", background: "#d8dfe8" }} />
+      <div className="h-3 rounded-xl" style={{ width: "38%", background: "#d8dfe8" }} />
+      <div className="flex gap-2 mt-1">
+        <div className="h-7 rounded-xl" style={{ width: 90, background: "#d8dfe8" }} />
+        <div className="h-7 rounded-xl" style={{ width: 90, background: "#d8dfe8" }} />
+        <div className="h-7 rounded-xl" style={{ width: 110, background: "#d8dfe8" }} />
+      </div>
+    </div>
+  );
+}
+
 function NewEventModal({
   onClose,
   onCreate,
@@ -235,9 +255,14 @@ export function HomeScreen() {
   const [events, setEvents] = useState<AppEvent[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [eventsLoading, setEventsLoading] = useState(true);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setEventsLoading(false);
+      return;
+    }
+    setEventsLoading(true);
     const unsub = subscribeToMyEvents(
       user.uid,
       (items) => {
@@ -245,8 +270,12 @@ export function HomeScreen() {
         mapped.sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time));
         setEvents(mapped);
         setError(null);
+        setEventsLoading(false);
       },
-      () => setError("No se pudieron cargar los eventos."),
+      () => {
+        setError("No se pudieron cargar los eventos.");
+        setEventsLoading(false);
+      },
     );
     return () => unsub();
   }, [user]);
@@ -283,10 +312,25 @@ export function HomeScreen() {
 
         <div className="flex-1 px-6 pb-32 flex flex-col gap-4 mt-2">
           {error && <p style={{ fontSize: "13px", color: "#e53e3e", margin: 0 }}>{error}</p>}
-          <p style={{ fontSize: "13px", color: "#8a9bb0", fontWeight: 500, margin: 0 }}>{events.length} eventos agendados</p>
-          {events.map((event) => (
-            <EventCard key={event.id} event={event} onClick={() => navigate(`/event/${event.id}`)} />
-          ))}
+          {eventsLoading ? (
+            <>
+              <p style={{ fontSize: "13px", color: "#8a9bb0", fontWeight: 600, margin: 0 }}>Cargando eventos...</p>
+              <EventCardSkeleton />
+              <EventCardSkeleton />
+              <EventCardSkeleton />
+            </>
+          ) : (
+            <>
+              <p style={{ fontSize: "13px", color: "#8a9bb0", fontWeight: 500, margin: 0 }}>{events.length} eventos agendados</p>
+              {events.length === 0 ? (
+                <p style={{ fontSize: "13px", color: "#a0aec0", margin: 0 }}>Aún no tienes eventos creados.</p>
+              ) : (
+                events.map((event) => (
+                  <EventCard key={event.id} event={event} onClick={() => navigate(`/event/${event.id}`)} />
+                ))
+              )}
+            </>
+          )}
         </div>
 
         <div className="fixed bottom-8 left-1/2 -translate-x-1/2 w-full max-w-[390px] px-6 pointer-events-none">
