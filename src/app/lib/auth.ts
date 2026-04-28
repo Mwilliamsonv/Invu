@@ -21,11 +21,14 @@ export async function upsertUserProfile(user: User): Promise<void> {
     uid: user.uid,
     email,
     displayName,
-    photoURL: user.photoURL ?? undefined,
     providers: user.providerData.map((p) => p.providerId),
     createdAt: nowIso(),
     updatedAt: nowIso(),
   };
+
+  if (user.photoURL) {
+    profile.photoURL = user.photoURL;
+  }
 
   await setDoc(doc(db, "users", user.uid), profile, { merge: true });
 }

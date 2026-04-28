@@ -6,6 +6,8 @@ import {
   Users,
   Plus,
   User,
+  Mail,
+  LogOut,
   ChevronRight,
   Search,
   Archive,
@@ -226,6 +228,102 @@ function EventCardSkeleton() {
   );
 }
 
+function AccountView({
+  name,
+  email,
+  photoURL,
+  onBack,
+  onLogout,
+}: {
+  name: string;
+  email: string;
+  photoURL?: string | null;
+  onBack: () => void;
+  onLogout: () => Promise<void>;
+}) {
+  const initials = name
+    .split(" ")
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? "")
+    .join("");
+
+  return (
+    <div className="flex flex-col gap-5">
+      <button
+        onClick={onBack}
+        className="self-start flex items-center gap-2 px-3 py-2 rounded-xl"
+        style={{
+          border: "none",
+          background: "#e8ecf0",
+          boxShadow: "4px 4px 8px #b8bec7, -4px -4px 8px #ffffff",
+          color: "#6b7a8d",
+          cursor: "pointer",
+          fontSize: 12,
+          fontWeight: 700,
+        }}
+      >
+        <ArrowLeft size={14} /> Volver a eventos
+      </button>
+
+      <div
+        className="rounded-3xl p-5 flex items-center gap-4"
+        style={{ background: "#e8ecf0", boxShadow: "6px 6px 14px #b8bec7, -6px -6px 14px #ffffff" }}
+      >
+        <div
+          className="relative flex items-center justify-center flex-shrink-0 overflow-hidden"
+          style={{ width: 84, height: 84, borderRadius: 28, background: "#e8ecf0", boxShadow: "6px 6px 14px #b8bec7, -6px -6px 14px #ffffff" }}
+        >
+          {photoURL ? (
+            <img src={photoURL} alt="Foto de perfil" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          ) : (
+            <div
+              className="flex items-center justify-center"
+              style={{ width: 68, height: 68, borderRadius: 22, background: "linear-gradient(135deg, #26c6da 0%, #00acc1 100%)" }}
+            >
+              <span style={{ fontSize: 24, fontWeight: 800, color: "#fff", letterSpacing: -0.5 }}>{initials}</span>
+            </div>
+          )}
+        </div>
+        <div className="flex flex-col min-w-0">
+          <span style={{ fontSize: 18, fontWeight: 800, color: "#3d4a5c", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
+          <span style={{ fontSize: 13, color: "#8a9bb0", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{email}</span>
+        </div>
+      </div>
+
+      <div
+        className="rounded-3xl p-5 flex flex-col gap-3"
+        style={{ background: "#e8ecf0", boxShadow: "6px 6px 14px #b8bec7, -6px -6px 14px #ffffff" }}
+      >
+        <div
+          className="flex items-center gap-3 px-4 py-3 rounded-2xl"
+          style={{ background: "#e8ecf0", boxShadow: "inset 4px 4px 8px #b8bec7, inset -4px -4px 8px #ffffff" }}
+        >
+          <User size={16} color="#26c6da" />
+          <span style={{ fontSize: 14, color: "#3d4a5c", fontWeight: 600 }}>{name}</span>
+        </div>
+        <div
+          className="flex items-center gap-3 px-4 py-3 rounded-2xl"
+          style={{ background: "#e8ecf0", boxShadow: "inset 4px 4px 8px #b8bec7, inset -4px -4px 8px #ffffff" }}
+        >
+          <Mail size={16} color="#26c6da" />
+          <span style={{ fontSize: 14, color: "#3d4a5c", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{email}</span>
+        </div>
+      </div>
+
+      <button
+        onClick={onLogout}
+        className="flex items-center gap-4 px-5 py-4 rounded-2xl w-full"
+        style={{ background: "#e8ecf0", boxShadow: "6px 6px 14px #b8bec7, -6px -6px 14px #ffffff", border: "none", cursor: "pointer" }}
+      >
+        <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "rgba(229,62,62,0.10)" }}>
+          <LogOut size={18} color="#e53e3e" />
+        </div>
+        <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: "#e53e3e", textAlign: "left" }}>Cerrar sesión</span>
+      </button>
+    </div>
+  );
+}
+
 function NewEventModal({
   onClose,
   onCreate,
@@ -340,6 +438,7 @@ export function HomeScreen() {
   const [eventsLoading, setEventsLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  const [showAccount, setShowAccount] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -415,28 +514,36 @@ export function HomeScreen() {
             <div>
               <p style={{ fontSize: "13px", color: "#8a9bb0", fontWeight: 500, margin: 0 }}>{welcomeName}</p>
               <h1 style={{ fontSize: "22px", fontWeight: 700, color: "#3d4a5c", margin: 0 }}>
-                {showArchived ? "Eventos archivados" : "Mis Eventos"}
+                {showAccount ? "Mi cuenta" : showArchived ? "Eventos archivados" : "Mis Eventos"}
               </h1>
             </div>
             <button
-              onClick={async () => {
-                await logout();
-                navigate("/");
-              }}
+              onClick={() => setShowAccount(true)}
               className="w-11 h-11 rounded-2xl flex items-center justify-center"
               style={{ background: "#e8ecf0", boxShadow: "5px 5px 10px #b8bec7, -5px -5px 10px #ffffff", border: "none", cursor: "pointer" }}
-              title="Cerrar sesión"
+              title="Mi cuenta"
             >
               <User size={18} color="#26c6da" strokeWidth={2} />
             </button>
           </div>
-          <p style={{ margin: "4px 0 0", fontSize: 11, color: "#8a9bb0", fontWeight: 600 }}>Versión 0.5 Beta</p>
+          <p style={{ margin: "4px 0 0", fontSize: 11, color: "#8a9bb0", fontWeight: 600 }}>Versión 0.6.0</p>
         </div>
 
         <div className="flex-1 px-6 pb-32 flex flex-col gap-4 mt-2">
           {error && <p style={{ fontSize: "13px", color: "#e53e3e", margin: 0 }}>{error}</p>}
 
-          {showArchived ? (
+          {showAccount ? (
+            <AccountView
+              name={user?.displayName || user?.email?.split("@")[0] || "Usuario"}
+              email={user?.email || "Sin correo"}
+              photoURL={user?.photoURL}
+              onBack={() => setShowAccount(false)}
+              onLogout={async () => {
+                await logout();
+                navigate("/");
+              }}
+            />
+          ) : showArchived ? (
             <>
               <button
                 onClick={() => setShowArchived(false)}
@@ -512,7 +619,7 @@ export function HomeScreen() {
           )}
         </div>
 
-        {!showArchived && (
+        {!showArchived && !showAccount && (
           <div className="fixed bottom-8 left-1/2 -translate-x-1/2 w-full max-w-[390px] px-6 pointer-events-none">
             <button
               onClick={() => setShowModal(true)}
